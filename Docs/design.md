@@ -73,7 +73,7 @@ PCMonitor/
   ├─ PCMonitor.sln
   ├─ src/
   │   ├─ PCMonitor.Core/         点検ロジック。UI に依存しない
-  │   ├─ PCMonitor.Cli/          コンソール版（pcmonitor.exe）。画面なしで点検を走らせる
+  │   ├─ PCMonitor.Cli/          コンソール版（pcmonitor-cli.exe。§15 で pcmonitor.exe から改名）。画面なしで点検を走らせる
   │   └─ PCMonitor.Wpf/          画面（WPF + ReactiveUI）。実行ファイルは PCMonitor.exe
   └─ tests/
       ├─ PCMonitor.Core.Tests/   採点と解析の単体テスト
@@ -91,9 +91,9 @@ PCMonitor/
 検知を実測するために先に作った。
 
 ```
-pcmonitor [--min-level info|low|medium|high] [--verbose] [--find <文字列>]
+pcmonitor-cli [--min-level info|low|medium|high] [--verbose] [--find <文字列>]
           [--json <パス>] [--csv <パス>] [--data-dir <フォルダー>] [--no-save]
-pcmonitor --verify <ファイル>      署名の検証結果だけを表示する
+pcmonitor-cli --verify <ファイル>      署名の検証結果だけを表示する
 ```
 
 ### Core の中の分け方
@@ -447,7 +447,7 @@ ETW だけは「その瞬間を写す」のではなく「一定時間見張る�
 採点の調整用に、コンソール版に一覧を出す入口を置いた。
 
 ```
-pcmonitor --memory-map      プロセスごとに、該当する領域の個数・大きさと、JIT の手がかりを並べる
+pcmonitor-cli --memory-map      プロセスごとに、該当する領域の個数・大きさと、JIT の手がかりを並べる
 ```
 
 ### 11.4 署名の検証の補足
@@ -582,8 +582,8 @@ Probe の `--key-apis` は、4 つの API を**何も取得しない形で**呼�
 合計 90 点で「高」になった。前面限定の生入力は「自分用」として点が付かず、取り消しとウィンドウ通知は拾わなかった。
 
 ```
-pcmonitor --read-etl artifacts\etw\win32k-audit.etl --find PCMonitor.Probe
-pcmonitor --read-etl <パス> --list      記録から読んだ呼び出しを並べるだけ
+pcmonitor-cli --read-etl artifacts\etw\win32k-audit.etl --find PCMonitor.Probe
+pcmonitor-cli --read-etl <パス> --list      記録から読んだ呼び出しを並べるだけ
 ```
 
 **その場での見張りも確かめた**（2026-11-13、管理者、`tools/monitor-probe.ps1`）。
@@ -598,7 +598,7 @@ pcmonitor --read-etl <パス> --list      記録から読んだ呼び出しを�
 ```
 pwsh -File tools\monitor-probe.ps1                        見張り・Probe の実行・点検をまとめて行う
 pwsh -File tools\monitor-probe.ps1 -Ambient -Seconds 120  Probe を動かさず、ふだんの状態を見張る
-pcmonitor --monitor-keys 10 --find PCMonitor.Probe        コンソール版を直接使う
+pcmonitor-cli --monitor-keys 10 --find PCMonitor.Probe        コンソール版を直接使う
 ```
 
 Windows PowerShell 5.1 は、既定ではスクリプトを実行しない（実行ポリシー）。`pwsh -File` で呼ぶか、
@@ -637,7 +637,7 @@ Windows PowerShell 5.1 は、既定ではスクリプトを実行しない（実
 ```
 PCMonitor.Probe.exe [--run-key] [--listen <ポート>] [--seconds <秒>]
                     [--ready-file <パス>] [--stop-file <パス>]
-pcmonitor --no-save --find PCMonitor.Probe
+pcmonitor-cli --no-save --find PCMonitor.Probe
 ```
 
 | 検証プログラムのふるまい | 期待する結果 |
@@ -716,4 +716,55 @@ pcmonitor --no-save --find PCMonitor.Probe
 - 定期実行して差分だけ通知する機能を入れるか
 - 既知マルウェアのハッシュ一覧や YARA ルールとの照合を足すか
   （足すなら、一覧の入手元と更新のしかたを決める）
-- インストーラーを作るか、ZIP の配布に留めるか
+- インストーラーを作るか。いまは ZIP の配布に留めている（§15）
+- **.NET 10 に移すか**（§15）
+- コード署名をするか。しないと、受け取った PC で SmartScreen が止める（§15）
+
+## 15. ほかの PC で使う（2026-11-13、0.2.0）
+
+### 配る形
+
+`tools/publish.ps1` が、画面とコンソール版を **.NET の実行環境ごと**（自己完結型）1 つのフォルダーにまとめ、ZIP にする。
+受け取った PC に .NET は要らない。インストーラーは作らず、レジストリも書き換えない。
+
+| 入れるもの | 入れないもの |
+|---|---|
+| `PCMonitor.exe`（画面）、`pcmonitor-cli.exe`（コンソール版）、.NET 9 の実行環境、使う人向けの `README.txt` | 検証プログラム（Probe）、`tools/` のスクリプト、デバッグ用のシンボル、TraceEvent のほかの CPU 向けの補助 DLL |
+
+- **Probe を入れないのは**、キーロガーが使う API を（何も取得しない形でも）呼ぶので、受け取った PC のウイルス対策ソフトに
+  止められうるうえ、使う人には要らないため
+- **単一ファイル（exe 1 つ）にはしなかった。** TraceEvent が補助 DLL を自分の置き場所から探すので、単一ファイルにすると
+  キー入力 API の監視が壊れうる。フォルダーごと ZIP にする
+- **コンソール版の名前を `pcmonitor.exe` から `pcmonitor-cli.exe` に変えた。** 同じフォルダーに入れると、
+  画面の `PCMonitor.exe` とぶつかる（Windows はファイル名の大文字・小文字を区別しない）
+- 説明書（`dist/README.txt`）は、メモ帳で読めるよう、ZIP に入れるときに改行を CRLF、文字コードを BOM 付き UTF-8 にする。
+  ZIP の中のファイル名は英数字だけにした（日本語のファイル名は、展開する道具によって化ける）
+- ZIP の SHA-256 を `.sha256.txt` に書き出す。受け取った人が照合できるように
+
+### 使えない機能を、その PC で調べて出す
+
+別の PC では、条件によって使えない機能がある。黙って何も出さないと「何も無かった」と読まれるので、必ず画面に出す。
+
+- `MachineInfo` が、Windows の版（ビルド番号で 10 と 11 を分ける。レジストリの `ProductName` は 11 でも「Windows 10」のまま）、
+  CPU の種類、権限、実行環境を調べる。スキャンの注意書きの先頭と、書き出した JSON に入る
+- 確かめていない条件（Windows 10、確かめた版より古い Windows 11、ARM64）は、注意書きにそう出す
+- **キー入力 API の監視は、Win32k のプロバイダーが監査のイベント（1001・1002、キーワード `AuditApiCalls`）を定義しているかを、
+  その PC で確かめる。** 定義は管理者でなくても読める（TraceEvent の `GetManifestForRegisteredProvider`）。
+  無ければ、ボタンを押せない状態にして理由を出す。古い Windows ではこの仕組みが無いことがある
+- コンソール版の `--check-env` で、その PC の条件と、使えない機能を表示できる
+
+### 確かめたこと
+
+- ZIP を日本語と空白を含むフォルダーに展開し、インストール済みの .NET を見えなくした状態（`PATH` から外し、
+  `DOTNET_ROOT` を存在しない場所に向けた）で、コンソール版の点検と、画面の起動が動いた。
+  画面の `coreclr.dll`・`PresentationFramework.dll` は、展開したフォルダーから読み込まれていた
+- **別の PC では、まだ一度も動かしていない。** ほかの Windows の版、ARM64、会社の PC の制限は、確かめていない
+
+### .NET 9 のサポートは終わっている
+
+**.NET 9 のサポートは 2026-11-10 に終わった**（Microsoft の .NET サポート ポリシーのページで確認）。
+自己完結型で配ると、ZIP に入れた実行環境（9.0.17）には、これからセキュリティ更新が入らない。
+点検ツールとしては望ましくない。
+
+.NET 10（LTS、2028-11-14 まで）に移せば解消する。この PC には .NET 10 の SDK が入っていないので、入れるところから要る。
+画面は ReactiveUI 23.2.28 に固定しているので、移すときは .NET 10 で動くかを確かめる（`~/ClaudeDev/rules/dotnet.md`）。

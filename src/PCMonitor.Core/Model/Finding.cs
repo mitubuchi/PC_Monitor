@@ -123,4 +123,7 @@ public sealed class ScanResult
 
     /// <summary>前回の結果があり、差分を付けられたか。</summary>
     public bool HasPrevious { get; init; }
+
+    /// <summary>点検した PC の条件。書き出した結果を別の PC で見るときに、どこまで見られたかが分かるように残す。</summary>
+    public MachineInfo? Machine { get; init; }
 }

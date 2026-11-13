@@ -108,6 +108,12 @@ public sealed class Scanner
             facts.Notes.Insert(0, new ScanNote("権限",
                 "通常の権限で点検した。ほかの利用者とシステムのプロセス、一部のタスク、WMI イベント購読は管理者でないと見られない", true));
 
+        // この PC の条件と、ここでは使えない機能・確かめていない条件を先頭に出す
+        var machine = MachineInfo.Detect();
+        var caveats = machine.Caveats().ToList();
+        facts.Notes.InsertRange(0, caveats);
+        facts.Notes.Insert(0, new ScanNote("この PC", machine.Describe()));
+
         progress?.Report("完了");
         return new ScanResult
         {
@@ -117,6 +123,7 @@ public sealed class Scanner
             Findings = findings,
             Notes = facts.Notes,
             HasPrevious = hasPrevious,
+            Machine = machine,
         };
     }
 

@@ -1,4 +1,5 @@
 using Microsoft.Diagnostics.Tracing;
+using Microsoft.Diagnostics.Tracing.Parsers;
 using Microsoft.Diagnostics.Tracing.Session;
 using PCMonitor.Core.Collectors;
 
@@ -25,6 +26,53 @@ public sealed class KeyApiMonitor : IDisposable
     private TraceEventSession? _session;
     private Task? _pump;
     private DevicePaths? _devices;
+
+    private static readonly Lazy<(bool Supported, string Reason)> Support = new(DetectSupport);
+
+    /// <summary>
+    /// この Windows で、キー入力 API の監視が使えるか。権限は見ない（管理者かどうかは別に確かめる）。
+    ///
+    /// 見るのは、Win32k のプロバイダーが、監査のイベント（1001・1002）を定義しているか。
+    /// 定義はプロバイダーごとに Windows に登録されていて、管理者でなくても読める。
+    /// 2026-11-13 に Windows 11 25H2 で確かめた形が前提で、古い Windows には無いことがある。
+    /// </summary>
+    public static (bool Supported, string Reason) CheckSupport() => Support.Value;
+
+    private static (bool, string) DetectSupport()
+    {
+        string? manifest;
+        try
+        {
+            manifest = RegisteredTraceEventParser.GetManifestForRegisteredProvider(Win32kProvider);
+        }
+        catch (Exception ex)
+        {
+            return (false, $"Win32k のイベントの定義を読めなかった（{ex.GetType().Name}: {ex.Message}）");
+        }
+        if (string.IsNullOrEmpty(manifest))
+            return (false, "Win32k のイベントの定義が、この Windows に登録されていない");
+
+        var hook = HasAuditEvent(manifest, 1002);
+        var rawInput = HasAuditEvent(manifest, 1001);
+        if (hook && rawInput) return (true, "");
+        return (false, hook || rawInput
+            ? "Win32k の監査のイベントが一部しか定義されていない（フックの設置か、生入力の登録のどちらかを見られない）"
+            : "Win32k の監査のイベント（AuditApiCalls）が定義されていない。古い Windows では、この仕組みが無い");
+    }
+
+    /// <summary>マニフェストに、その番号の監査のイベントがあるか。属性の並びは決め打ちしない。</summary>
+    internal static bool HasAuditEvent(string manifest, int id)
+    {
+        foreach (System.Text.RegularExpressions.Match match in
+                 System.Text.RegularExpressions.Regex.Matches(manifest, @"<event\s[^>]*>", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+        {
+            var element = match.Value;
+            if (element.Contains($"value=\"{id}\"", StringComparison.OrdinalIgnoreCase)
+                && element.Contains("AuditApiCalls", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
 
     public bool IsRunning => _session is not null;
     public DateTime? StartedUtc { get; private set; }
@@ -53,6 +101,9 @@ public sealed class KeyApiMonitor : IDisposable
         if (IsRunning) return;
         if (!Scanner.IsElevated())
             throw new UnauthorizedAccessException("キー入力 API の監視は、管理者として起動したときだけ始められます。");
+        var (supported, reason) = CheckSupport();
+        if (!supported)
+            throw new PlatformNotSupportedException("この Windows では、キー入力 API の監視を使えません。\n" + reason);
 
         // 前回、片付ける前に落ちていたら、同じ名前のセッションが残っている
         TraceEventSession.GetActiveSession(SessionName)?.Stop(true);

@@ -6,7 +6,7 @@
 .DESCRIPTION
     管理者のターミナルで実行する。画面を操作しなくても済むように、次をまとめて行う。
 
-      1. コンソール版（pcmonitor.exe）で、キー入力 API の見張りを始める
+      1. コンソール版（pcmonitor-cli.exe）で、キー入力 API の見張りを始める
       2. 見張っている間に、PCMonitor.Probe を --key-apis で動かす
          （キーロガーが使う API を、何も取得しない形で呼ぶ。キー入力は受け取らない）
       3. 見張りが終わると、そのまま点検が走る。拾った呼び出しのすべてと、Probe の行を書き出す
@@ -34,7 +34,7 @@ $name = if ($Ambient) { 'monitor-ambient' } else { 'monitor-run' }
 $report = Join-Path $outDir "$name.txt"
 $errors = Join-Path $outDir "$name-errors.txt"
 $dataDir = Join-Path $outDir 'data'
-$cli = Join-Path $root 'src\PCMonitor.Cli\bin\Debug\net9.0-windows\pcmonitor.exe'
+$cli = Join-Path $root 'src\PCMonitor.Cli\bin\Debug\net9.0-windows\pcmonitor-cli.exe'
 $probe = Join-Path $root 'tests\PCMonitor.Probe\bin\Debug\net9.0-windows\PCMonitor.Probe.exe'
 
 foreach ($file in $cli, $probe) {

@@ -568,6 +568,31 @@ public class ScorerTests
     }
 
     [Fact]
+    public void 監視に使うイベントがあるかを_マニフェストから見分ける()
+    {
+        // 属性の並びは決め打ちしない。キーワードが AuditApiCalls でなければ数えない
+        const string manifest = """
+            <events>
+              <event value="1002" symbol="Hook" keywords="AuditApiCalls" level="win:Informational"/>
+              <event keywords="AuditApiCalls" level="win:Informational" value="1001" template="t1"/>
+              <event value="1003" keywords="Focus"/>
+            </events>
+            """;
+        Assert.True(KeyApiMonitor.HasAuditEvent(manifest, 1002));
+        Assert.True(KeyApiMonitor.HasAuditEvent(manifest, 1001));
+        Assert.False(KeyApiMonitor.HasAuditEvent(manifest, 1003));
+        Assert.False(KeyApiMonitor.HasAuditEvent(manifest, 1000));
+    }
+
+    [Fact]
+    public void この_PC_の監視の判定は_定義を読めれば答えが出る()
+    {
+        // どちらに転んでも、理由を伴って返る（例外で落ちない）
+        var (supported, reason) = KeyApiMonitor.CheckSupport();
+        Assert.True(supported || reason.Length > 0);
+    }
+
+    [Fact]
     public void 許可リストは_ハッシュが変わると外れて_変わったことを挙げる()
     {
         var directory = Path.Combine(Path.GetTempPath(), "pcmonitor-tests-" + Guid.NewGuid().ToString("N"));

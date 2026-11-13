@@ -8,9 +8,9 @@ using PCMonitor.Core.Signing;
 
 // 画面なしで点検を走らせる。検知の実測と、あとで足す定期実行のための入口。
 //
-//   pcmonitor [--min-level info|low|medium|high] [--verbose] [--find <文字列>]
+//   pcmonitor-cli [--min-level info|low|medium|high] [--verbose] [--find <文字列>]
 //             [--json <パス>] [--csv <パス>] [--data-dir <フォルダー>] [--no-save]
-//   pcmonitor --verify <ファイル>      署名の検証結果だけを表示する
+//   pcmonitor-cli --verify <ファイル>      署名の検証結果だけを表示する
 
 Console.OutputEncoding = new UTF8Encoding(false);
 
@@ -24,9 +24,9 @@ bool Flag(string name) => args.Contains(name);
 
 if (Flag("--help") || Flag("-h"))
 {
-    Console.WriteLine("pcmonitor [--min-level info|low|medium|high] [--verbose] [--find <文字列>]");
+    Console.WriteLine("pcmonitor-cli [--min-level info|low|medium|high] [--verbose] [--find <文字列>]");
     Console.WriteLine("          [--json <パス>] [--csv <パス>] [--data-dir <フォルダー>] [--no-save]");
-    Console.WriteLine("pcmonitor --verify <ファイル>");
+    Console.WriteLine("pcmonitor-cli --verify <ファイル>");
     return 0;
 }
 
@@ -34,6 +34,20 @@ if (Option("--verify") is { } verifyPath)
 {
     var signature = new SignatureVerifier().Verify(verifyPath);
     Console.WriteLine($"{signature.Display}{(signature.FromCatalog ? "［カタログ署名］" : "")} {signature.Detail}");
+    return 0;
+}
+
+if (Flag("--check-env"))
+{
+    // この PC の条件と、使えない機能を並べる（別の PC で使い始めるときの確認用）
+    var machine = MachineInfo.Detect();
+    Console.WriteLine("この PC: " + machine.Describe());
+    var (supported, reason) = KeyApiMonitor.CheckSupport();
+    Console.WriteLine("キー入力 API の監視: " + (supported
+        ? (machine.Elevated ? "使える" : "この Windows では使えるが、管理者として起動する必要がある")
+        : "使えない（" + reason + "）"));
+    foreach (var caveat in machine.Caveats().Where(c => c.Area != "キー入力 API の監視"))
+        Console.WriteLine($"※ {caveat.Area}: {caveat.Message}");
     return 0;
 }
 

@@ -16,6 +16,7 @@ public sealed class MainViewModel : ReactiveObject, IDisposable
 {
     private readonly Scanner _scanner = new();
     private readonly KeyApiMonitor _monitor = new();
+    private readonly string _monitorUnsupportedReason;
     private bool _isMonitoring;
     private string _monitorStatus = "";
     private List<FindingRow> _all = new();
@@ -51,8 +52,10 @@ public sealed class MainViewModel : ReactiveObject, IDisposable
         ToggleAllowCommand = ReactiveCommand.Create(ToggleAllow, hasHash);
         ExportCsvCommand = ReactiveCommand.Create(ExportCsv, hasResult);
         ExportJsonCommand = ReactiveCommand.Create(ExportJson, hasResult);
-        // 見張りは管理者でしか始められない。通常の権限のときは、押せない状態にして理由を出す
-        ToggleMonitorCommand = ReactiveCommand.Create(ToggleMonitor, Observable.Return(IsElevated));
+        // 見張りは、管理者で、かつこの Windows に監査のイベントがあるときだけ始められる。
+        // どちらかが欠けていれば、押せない状態にして理由を出す
+        (MonitorSupported, _monitorUnsupportedReason) = KeyApiMonitor.CheckSupport();
+        ToggleMonitorCommand = ReactiveCommand.Create(ToggleMonitor, Observable.Return(IsElevated && MonitorSupported));
 
         // 呼び出しは受け取りのスレッドから知らされる。画面のスレッドへ移してから件数を直す
         Observable.FromEvent<KeyApiCall>(handler => _monitor.CallObserved += handler, handler => _monitor.CallObserved -= handler)
@@ -83,7 +86,9 @@ public sealed class MainViewModel : ReactiveObject, IDisposable
     public Func<string, string, string?>? PickSavePath { get; set; }
 
     public bool IsElevated { get; }
-    public string Title => "PCMonitor — 常駐と通信の点検" + (IsElevated ? "（管理者）" : "");
+    // 版を出しておく。別の PC で使われたとき、どの版の結果かを取り違えないように
+    public string Title => $"PCMonitor {typeof(MainViewModel).Assembly.GetName().Version?.ToString(3)} — 常駐と通信の点検"
+                           + (IsElevated ? "（管理者）" : "");
     public string DataDirectory => _scanner.Paths.Directory;
 
     public ReactiveCommand<Unit, Unit> ScanCommand { get; }
@@ -95,6 +100,9 @@ public sealed class MainViewModel : ReactiveObject, IDisposable
     public ReactiveCommand<Unit, Unit> ExportCsvCommand { get; }
     public ReactiveCommand<Unit, Unit> ExportJsonCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleMonitorCommand { get; }
+
+    /// <summary>この Windows に、キー入力 API の監視に使うイベントがあるか（権限は別）。</summary>
+    public bool MonitorSupported { get; }
 
     public bool IsMonitoring
     {
@@ -321,7 +329,7 @@ public sealed class MainViewModel : ReactiveObject, IDisposable
             {
                 _monitor.Start();
             }
-            catch (Exception ex) when (ex is UnauthorizedAccessException or InvalidOperationException
+            catch (Exception ex) when (ex is UnauthorizedAccessException or InvalidOperationException or PlatformNotSupportedException
                                            or System.Runtime.InteropServices.COMException or Win32Exception)
             {
                 ShowError("キー入力 API の監視を始められませんでした。\n" + ex.Message);
@@ -333,7 +341,9 @@ public sealed class MainViewModel : ReactiveObject, IDisposable
 
     private void UpdateMonitorStatus()
     {
-        if (!IsElevated)
+        if (!MonitorSupported)
+            MonitorStatus = "キー入力 API の監視: この Windows では使えません（" + _monitorUnsupportedReason + "）";
+        else if (!IsElevated)
             MonitorStatus = "キー入力 API の監視: 管理者として起動すると使えます";
         else if (_monitor.IsRunning)
             MonitorStatus = $"キー入力 API を監視中（{_monitor.StartedUtc?.ToLocalTime():HH:mm:ss} から、{_monitor.Count} 件）。スキャンすると結果に入ります";

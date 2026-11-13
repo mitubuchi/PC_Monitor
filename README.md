@@ -36,7 +36,39 @@ PCMonitor は「常駐している・通信している・署名が無い」と�
 兆候は 1 つずつでは弱く、重なったときに上がる。単独で「高」になる兆候は作っていない。
 点数と、それを付ける条件は [Docs/design.md](Docs/design.md) の §6 と §11。
 
-## 必要なもの
+## ほかの PC で使う
+
+.NET の実行環境ごとまとめた ZIP を作って渡す。受け取った PC に .NET を入れる必要は無い。
+
+```
+pwsh -File tools\publish.ps1
+```
+
+`artifacts\publish\PCMonitor-<版>-win-x64.zip` ができる（約 75 MB、展開すると約 185 MB）。
+中身は画面（`PCMonitor.exe`）、コンソール版（`pcmonitor-cli.exe`）、使う人向けの説明書（`README.txt`）。
+検証プログラム（Probe）は入れていない。説明書の元は [dist/README.txt](dist/README.txt)。
+
+| 条件 | 動くか |
+|---|---|
+| Windows 11 25H2（x64） | 確かめた |
+| Windows 11 のほかの版、Windows 10 1607 以降（x64） | 動くはずだが、確かめていない |
+| ARM64 の PC | x64 のアプリとして動くはずだが、確かめていない |
+| 32 ビット版の Windows | 動かない |
+
+**使えない機能や、確かめていない条件は、その PC で調べて画面に出す。**
+スキャンの結果の注意書きの先頭に、その PC の条件（Windows の版、CPU、権限、実行環境）と、
+使えない機能が並ぶ。書き出した JSON にも入る。
+
+| 機能 | 使えない条件 | 使えないときの画面 |
+|---|---|---|
+| キー入力 API の監視 | 管理者でない / Windows に監査のイベントの定義が無い | ボタンが押せず、理由が出る |
+| 管理者でないと見られる範囲 | 通常の権限で起動したとき | 見られなかった件数が注意書きに出る |
+| 常駐箇所・WMI の一部 | 会社の PC などで、ポリシーで止められているとき | その箇所が「点検できなかった」として出る |
+
+使う人に向けた注意（SmartScreen、ZIP のブロックの解除、会社の PC、ウイルス対策ソフトとの関係）は、
+ZIP の中の `README.txt` に書いてある。
+
+## 必要なもの（開発）
 
 - Windows 10 / 11（64 ビット）。動かして確かめたのは Windows 11 25H2 だけ
 - [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0)
@@ -59,7 +91,7 @@ WMI イベント購読は、管理者でないと見られない。画面の「�
 コンソール版:
 
 ```
-src\PCMonitor.Cli\bin\Debug\net9.0-windows\pcmonitor.exe --min-level medium --verbose
+src\PCMonitor.Cli\bin\Debug\net9.0-windows\pcmonitor-cli.exe --min-level medium --verbose
 ```
 
 | オプション | 内容 |
@@ -71,6 +103,7 @@ src\PCMonitor.Cli\bin\Debug\net9.0-windows\pcmonitor.exe --min-level medium --ve
 | `--data-dir <フォルダー>` | 許可リストと「前回の結果」の置き場所を変える |
 | `--no-save` | 「前回の結果」として保存しない |
 | `--verify <ファイル>` | そのファイルの署名の検証結果だけを表示する |
+| `--check-env` | その PC の条件と、使えない機能を表示する |
 | `--memory-map` | プロセスごとに、実行イメージではない実行可能な領域と、JIT の手がかりを並べる |
 | `--monitor-keys <秒>` | その秒数だけキー入力 API を見張ってから点検する（管理者のみ） |
 | `--read-etl <パス>` | 記録済みの `.etl` から読んだ呼び出しを、見張りの結果として点検に渡す |
@@ -113,12 +146,13 @@ PCMonitor/
   ├─ PCMonitor.sln
   ├─ src/
   │   ├─ PCMonitor.Core/         点検ロジック。UI に依存しない
-  │   ├─ PCMonitor.Cli/          コンソール版（pcmonitor.exe）
+  │   ├─ PCMonitor.Cli/          コンソール版（pcmonitor-cli.exe）
   │   └─ PCMonitor.Wpf/          画面（WPF + ReactiveUI。PCMonitor.exe）
   ├─ tests/
   │   ├─ PCMonitor.Core.Tests/   採点と解析の単体テスト
   │   └─ PCMonitor.Probe/        検知を実測するための、無害な検証プログラム
-  └─ tools/                      管理者のターミナルで実行する、確認用のスクリプト
+  ├─ dist/README.txt             配布する ZIP に入れる、使う人向けの説明書
+  └─ tools/                      配布用の ZIP を作るスクリプトと、管理者のターミナルで実行する確認用のスクリプト
 ```
 
 Core の中は、**集める**（`Collectors`、`Monitoring`）と**判断する**（`Scoring`）を分けてある。
@@ -147,7 +181,7 @@ Probe は、キーロガーやバックドアが取る形を**害の無い形で
 
 ```
 tests\PCMonitor.Probe\bin\Debug\net9.0-windows\PCMonitor.Probe.exe --run-key --listen 47631 --seconds 60
-src\PCMonitor.Cli\bin\Debug\net9.0-windows\pcmonitor.exe --no-save --find PCMonitor.Probe
+src\PCMonitor.Cli\bin\Debug\net9.0-windows\pcmonitor-cli.exe --no-save --find PCMonitor.Probe
 ```
 
 キー入力 API の監視は、管理者のターミナルで確かめる。見張り・Probe の実行・点検をまとめて行う。
