@@ -34,6 +34,8 @@ public sealed class ScoringRules
     public int ModuleAcrossPublishers { get; init; } = 15;
     public int WritableExecutableMemory { get; init; } = 30;
     public int ExecutableMappedData { get; init; } = 30;
+    public int KeyInputCapture { get; init; } = 30;
+    public int KeyStatePolling { get; init; } = 15;
 
     /// <summary>発行元の違うプログラムが、この数以上その DLL を読み込んでいたら「広く入り込んでいる」とする。</summary>
     public int ModulePublisherThreshold { get; init; } = 3;
@@ -107,6 +109,21 @@ public sealed class Scorer
         var processes = new Dictionary<int, ProcessFact>();
         foreach (var process in facts.Processes) processes[process.Pid] = process;
 
+        // 見張っている間に呼ばれたキー入力の API。呼んだプロセスはもう終わっているかもしれないので、
+        // 受け取ったときに確かめた実行ファイルで突き合わせる
+        foreach (var call in facts.KeyApiCalls)
+        {
+            Finding caller;
+            if (call.Path is { } callerPath)
+                caller = ForFile(findings, callerPath);
+            else if (byPid.TryGetValue(call.Pid, out var running)
+                     && processes[call.Pid].StartedUtc is { } started && started <= call.TimeUtc)
+                caller = running;
+            else
+                caller = ForName(findings, $"pid:{call.Pid}", $"PID {call.Pid}（終了済み）");
+            caller.KeyApiCalls.Add(call);
+        }
+
         // 署名済みのプロセスに載っている、署名の有効でない DLL を候補にする。
         // 本体が未署名のアプリは、DLL も未署名なのがふつうで、本体のほうがもう挙がっている
         foreach (var (pid, modules) in facts.Modules)
@@ -147,6 +164,7 @@ public sealed class Scorer
             AddParentIndicators(finding, processes);
             AddModuleIndicators(finding);
             AddMemoryIndicators(finding, facts);
+            AddKeyApiIndicators(finding);
             AddNetworkIndicators(finding);
 
             finding.Score = finding.Indicators.Sum(i => i.Points);
@@ -394,6 +412,36 @@ public sealed class Scorer
                 "ファイルの裏付けが無い実行可能な領域がある（書き込みはできない）: " + Summarize(readOnly)
                 + "。ウィンドウ処理の中継コードなど、正規にも作られる");
     }
+
+    /// <summary>
+    /// キー入力に関わる API の呼び出し（設計書 §11.5）。使った API の数だけ点を重ねることはしない。
+    /// フックと生入力の両方を使う正規のソフトもあり、重ねるとそれだけで「高」になるため。
+    /// </summary>
+    private void AddKeyApiIndicators(Finding finding)
+    {
+        if (finding.KeyApiCalls.Count == 0) return;
+
+        var capture = finding.KeyApiCalls.Where(c => c.Weight == Monitoring.KeyApiWeight.Capture).ToList();
+        var polling = finding.KeyApiCalls.Where(c => c.Weight == Monitoring.KeyApiWeight.Polling).ToList();
+        var notes = finding.KeyApiCalls.Where(c => c.Weight == Monitoring.KeyApiWeight.Note).ToList();
+
+        if (capture.Count > 0)
+            Add(finding, IndicatorKind.KeyInputCapture, _rules.KeyInputCapture, "キー入力API",
+                "見張っている間に、ほかのアプリへのキー入力まで受け取れる形の API を呼んだ: "
+                + Summarize(DescribeCalls(capture.Concat(polling))));
+        else if (polling.Count > 0)
+            Add(finding, IndicatorKind.KeyStatePolling, _rules.KeyStatePolling, "キー状態",
+                "見張っている間に、キーの状態を横から問い合わせた: " + Summarize(DescribeCalls(polling)));
+
+        if (notes.Count > 0)
+            Add(finding, IndicatorKind.KeyApiNote, 0, "キー入力API(自分用)",
+                "見張っている間に、自分に向けたキー入力の API を呼んだ（正規のアプリもふつうに行う）: "
+                + Summarize(DescribeCalls(notes)));
+    }
+
+    private static IEnumerable<string> DescribeCalls(IEnumerable<Monitoring.KeyApiCall> calls) =>
+        calls.GroupBy(c => c.Description)
+            .Select(g => $"{g.Key}（{g.Count()} 回、{g.Min(c => c.TimeUtc).ToLocalTime():HH:mm:ss} から、PID {Summarize(g.Select(c => c.Pid.ToString()).Distinct(), 2)}）");
 
     private static string DescribeRegions(int pid, List<ExecutableRegion> regions) =>
         $"PID {pid} に {regions.Count} 個・計 {Math.Max(1, regions.Sum(r => r.Size) / 1024)} KB（0x{regions[0].Address:X} から）";

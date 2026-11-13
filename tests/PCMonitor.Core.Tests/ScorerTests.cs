@@ -1,5 +1,6 @@
 using PCMonitor.Core.Allowlist;
 using PCMonitor.Core.Model;
+using PCMonitor.Core.Monitoring;
 using PCMonitor.Core.Reports;
 using PCMonitor.Core.Scoring;
 
@@ -64,6 +65,7 @@ public class ScorerTests
             rules.NoVisibleWindow, rules.RecentlyCreated,
             rules.UnusualParent, rules.ModuleInSignedProcess, rules.ModuleAcrossPublishers, rules.SignatureNoneModule,
             rules.WritableExecutableMemory, rules.ExecutableMappedData,
+            rules.KeyInputCapture, rules.KeyStatePolling,
         };
         Assert.All(points, p => Assert.True(p < rules.HighFrom));
     }
@@ -441,6 +443,128 @@ public class ScorerTests
         Assert.True(PCMonitor.Core.Collectors.PeExports.ContainsAny(kernel32, "CreateFileW"));
         Assert.False(PCMonitor.Core.Collectors.PeExports.ContainsAny(kernel32, "napi_create_function"));
         Assert.False(PCMonitor.Core.Collectors.PeExports.ContainsAny(Path.Combine(Environment.SystemDirectory, "no-such-file.dll"), "x"));
+    }
+
+    // ---- 第 2 段階: キー入力 API の監視 ----
+
+    private static KeyApiCall Call(string? path, KeyApiWeight weight, string description = "呼び出し", int pid = 50) =>
+        new(Now.AddMinutes(-1), pid, 1, path, weight, description);
+
+    [Theory]
+    [InlineData(13, null, KeyApiWeight.Capture)]
+    [InlineData(13, "NULL", KeyApiWeight.Capture)]
+    [InlineData(2, @"C:\Users\u\AppData\hook.dll", KeyApiWeight.Capture)]
+    [InlineData(2, "NULL", KeyApiWeight.Note)]
+    [InlineData(0, null, KeyApiWeight.Capture)]
+    public void キーボードのフックは_ほかのアプリに届く形かどうかで重さが変わる(int filterType, string? library, KeyApiWeight expected)
+    {
+        Assert.Equal(expected, KeyApiClassifier.Hook(filterType, library)!.Value.Weight);
+    }
+
+    [Theory]
+    [InlineData(3)]   // WH_GETMESSAGE
+    [InlineData(5)]   // WH_CBT
+    [InlineData(14)]  // WH_MOUSE_LL
+    public void キー入力に関わらないフックは拾わない(int filterType)
+    {
+        Assert.Null(KeyApiClassifier.Hook(filterType, @"C:\x.dll"));
+    }
+
+    [Fact]
+    public void 生入力は_キーボードを前面でなくても受け取る形だけを重く見る()
+    {
+        const uint image = 0x1000000;
+        // 2026-11-13 に実機で流れてきた値: UsagePage 1、Usage 6、Flags 0（登録）と 1（取り消し）
+        Assert.Equal(KeyApiWeight.Note, KeyApiClassifier.RawInput(1, 6, 0x0, true, image)!.Value.Weight);
+        Assert.Null(KeyApiClassifier.RawInput(1, 6, 0x1, true, image));
+
+        Assert.Equal(KeyApiWeight.Capture, KeyApiClassifier.RawInput(1, 6, 0x100, true, image)!.Value.Weight);
+        Assert.Equal(KeyApiWeight.Capture, KeyApiClassifier.RawInput(1, 0, 0x120, true, image)!.Value.Weight);
+
+        // マウス、失敗した登録は対象外
+        Assert.Null(KeyApiClassifier.RawInput(1, 2, 0x100, true, image));
+        Assert.Null(KeyApiClassifier.RawInput(1, 6, 0x100, false, image));
+
+        // 登録したスレッドが、ファイルの裏付けが無いメモリから始まっていれば重く見る
+        var fromNowhere = KeyApiClassifier.RawInput(1, 6, 0x0, true, 0x20000)!.Value;
+        Assert.Equal(KeyApiWeight.Capture, fromNowhere.Weight);
+        Assert.Contains("ファイルの裏付けが無い", fromNowhere.Description);
+    }
+
+    [Fact]
+    public void キー入力を受け取れる形の_API_は_使った数だけ重ねずに_1_つの兆候にする()
+    {
+        const string path = @"C:\Program Files\Tool\tool.exe";
+        File(path, Vendor);
+        Process(50, path, window: true);
+        _facts.KeyApiCalls.Add(Call(path, KeyApiWeight.Capture, "フック"));
+        _facts.KeyApiCalls.Add(Call(path, KeyApiWeight.Capture, "生入力"));
+        _facts.KeyApiCalls.Add(Call(path, KeyApiWeight.Polling, "問い合わせ"));
+
+        var finding = Assert.Single(Score());
+        Assert.Equal(30, finding.Score);
+        var indicator = Assert.Single(finding.Indicators);
+        Assert.Equal(IndicatorKind.KeyInputCapture, indicator.Kind);
+        Assert.Contains("フック", indicator.Evidence);
+        Assert.Contains("生入力", indicator.Evidence);
+        Assert.True(finding.Sources.HasFlag(FindingSources.KeyApi));
+    }
+
+    [Fact]
+    public void 未署名で常駐するものがキー入力を受け取っていれば_高になる()
+    {
+        const string path = @"C:\Users\u\AppData\Roaming\helper.exe";
+        File(path, Unsigned, writable: true);
+        RunKey("Helper", Direct(path));
+        Process(50, path);
+        _facts.KeyApiCalls.Add(Call(path, KeyApiWeight.Capture));
+
+        var finding = Assert.Single(Score());
+        Assert.Equal(30 + 20 + 10 + 10 + 30, finding.Score);
+        Assert.Equal(RiskLevel.High, finding.Level);
+    }
+
+    [Fact]
+    public void 問い合わせだけなら低く数え_自分用の_API_は点を付けない()
+    {
+        File(@"C:\Program Files\A\a.exe", Vendor);
+        File(@"C:\Program Files\B\b.exe", Vendor);
+        _facts.KeyApiCalls.Add(Call(@"C:\Program Files\A\a.exe", KeyApiWeight.Polling));
+        _facts.KeyApiCalls.Add(Call(@"C:\Program Files\B\b.exe", KeyApiWeight.Note));
+
+        var findings = Score();
+        Assert.Equal(15, findings.Single(f => f.Name == "a.exe").Score);
+        var b = findings.Single(f => f.Name == "b.exe");
+        Assert.Equal(0, b.Score);
+        Assert.Equal(IndicatorKind.KeyApiNote, Assert.Single(b.Indicators).Kind);
+    }
+
+    [Fact]
+    public void 呼んだプロセスが終わっていても_実行ファイルで突き合わせる()
+    {
+        const string path = @"C:\Users\u\AppData\Local\gone.exe";
+        File(path, Unsigned, writable: true);
+        _facts.KeyApiCalls.Add(Call(path, KeyApiWeight.Capture, pid: 999));
+        _facts.KeyApiCalls.Add(Call(null, KeyApiWeight.Capture, pid: 888));
+
+        var findings = Score();
+        Assert.Equal(30 + 20 + 30, findings.Single(f => f.Path == path).Score);
+        // 実行ファイルが分からなければ、番号だけの項目として残す（隠さない）
+        Assert.Contains(findings, f => f.Key == "pid:888" && f.Score == 30);
+    }
+
+    [Fact]
+    public void 番号が使い回されたプロセスには_付けない()
+    {
+        const string path = @"C:\Program Files\App\app.exe";
+        File(path, Vendor);
+        // 呼び出しのあとに起動したプロセスが、同じ番号を持っている
+        Process(50, path, window: true, started: Now);
+        _facts.KeyApiCalls.Add(Call(null, KeyApiWeight.Capture, pid: 50));
+
+        var findings = Score();
+        Assert.Equal(0, findings.Single(f => f.Path == path).Score);
+        Assert.Contains(findings, f => f.Key == "pid:50");
     }
 
     [Fact]

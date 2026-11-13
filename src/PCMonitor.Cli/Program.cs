@@ -2,6 +2,7 @@ using System.Text;
 using PCMonitor.Core;
 using PCMonitor.Core.Collectors;
 using PCMonitor.Core.Model;
+using PCMonitor.Core.Monitoring;
 using PCMonitor.Core.Reports;
 using PCMonitor.Core.Signing;
 
@@ -33,6 +34,14 @@ if (Option("--verify") is { } verifyPath)
 {
     var signature = new SignatureVerifier().Verify(verifyPath);
     Console.WriteLine($"{signature.Display}{(signature.FromCatalog ? "［カタログ署名］" : "")} {signature.Detail}");
+    return 0;
+}
+
+if (Option("--read-etl") is { } etlPath && Flag("--list"))
+{
+    // 記録済みの .etl から、キー入力 API の呼び出しを読んで並べる（読み取りの確認用）
+    foreach (var call in KeyApiMonitor.ReadFile(etlPath))
+        Console.WriteLine($"{call.TimeUtc.ToLocalTime():HH:mm:ss.fff}  PID {call.Pid}  [{call.Weight}]  {call.Description}\n      {call.Path ?? "（実行ファイル不明）"}");
     return 0;
 }
 
@@ -79,7 +88,35 @@ var scanner = new Scanner(new ScanOptions
     SaveAsLast = !Flag("--no-save"),
 });
 
-var result = scanner.Scan(new Progress(), CancellationToken.None);
+// キー入力 API の監視（設計書 §11.5）
+//   --monitor-keys <秒>   その秒数だけ見張ってから点検する（管理者のみ）
+//   --read-etl <パス>     記録済みの .etl から読んだ呼び出しを、見張りの結果として点検に渡す
+KeyApiObservation? keyApi = null;
+if (int.TryParse(Option("--monitor-keys"), out var monitorSeconds) && monitorSeconds > 0)
+{
+    using var monitor = new KeyApiMonitor();
+    try
+    {
+        monitor.Start();
+    }
+    catch (UnauthorizedAccessException ex)
+    {
+        Console.Error.WriteLine(ex.Message);
+        return 2;
+    }
+    Console.Error.WriteLine($"キー入力 API を {monitorSeconds} 秒見張ります…");
+    Thread.Sleep(TimeSpan.FromSeconds(monitorSeconds));
+    monitor.Stop();
+    keyApi = monitor.Observation();
+}
+else if (Option("--read-etl") is { } replayPath)
+{
+    var calls = KeyApiMonitor.ReadFile(replayPath);
+    if (calls.Count > 0)
+        keyApi = new KeyApiObservation(calls.Min(c => c.TimeUtc), calls.Max(c => c.TimeUtc), calls);
+}
+
+var result = scanner.Scan(new Progress(), CancellationToken.None, keyApi);
 
 Console.WriteLine();
 Console.WriteLine($"点検 {result.StartedUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}  所要 {result.Elapsed.TotalSeconds:F1} 秒  "

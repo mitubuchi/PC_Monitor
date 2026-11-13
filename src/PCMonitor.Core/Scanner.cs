@@ -4,6 +4,7 @@ using System.Security.Principal;
 using PCMonitor.Core.Allowlist;
 using PCMonitor.Core.Collectors;
 using PCMonitor.Core.Model;
+using PCMonitor.Core.Monitoring;
 using PCMonitor.Core.Reports;
 using PCMonitor.Core.Scoring;
 using PCMonitor.Core.Signing;
@@ -42,7 +43,8 @@ public sealed class Scanner
     }
 
     /// <summary>途中で止められたら <see cref="OperationCanceledException"/> を投げる。</summary>
-    public ScanResult Scan(IProgress<string>? progress = null, CancellationToken cancel = default)
+    /// <param name="keyApi">キー入力 API を見張っていたなら、その結果。見張っていなければ null。</param>
+    public ScanResult Scan(IProgress<string>? progress = null, CancellationToken cancel = default, KeyApiObservation? keyApi = null)
     {
         var started = DateTime.UtcNow;
         var watch = Stopwatch.StartNew();
@@ -61,6 +63,18 @@ public sealed class Scanner
 
         progress?.Report("読み込まれている DLL とメモリの割り当てを点検中…");
         RunCollector(facts, "読み込み DLL とメモリ", () => new MemoryMapCollector().Collect(facts, cancel));
+
+        if (keyApi is not null)
+        {
+            facts.KeyApiCalls.AddRange(keyApi.Calls);
+            facts.Notes.Add(new ScanNote("キー入力 API の監視", keyApi.Describe()));
+        }
+        else
+        {
+            facts.Notes.Add(new ScanNote("キー入力 API の監視",
+                "見張っていない。フックの設置やキーボードの生入力の登録は、管理者として起動して見張りを始めた間のものしか分からない",
+                NeedsAdmin: !elevated));
+        }
 
         var inspector = new FileInspector(new CachingSignatureVerifier(new SignatureVerifier()));
         var files = InspectFiles(facts, inspector, progress, cancel);
@@ -127,6 +141,7 @@ public sealed class Scanner
     {
         var paths = facts.Persistence.Select(e => e.Command.TargetPath)
             .Concat(facts.Processes.Select(p => p.Path))
+            .Concat(facts.KeyApiCalls.Select(c => c.Path))
             .Where(p => p is not null)
             .Select(p => p!)
             .GroupBy(Scorer.FileKey, StringComparer.Ordinal)

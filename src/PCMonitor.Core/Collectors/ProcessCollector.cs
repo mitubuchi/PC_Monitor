@@ -67,6 +67,9 @@ public sealed class ProcessCollector
     private static bool IsKernelPseudoProcess(string name) =>
         name is "Registry" or "Memory Compression" or "Secure System" or "vmmem" or "vmmemWSL" or "[System Process]";
 
+    /// <summary>いま動いているプロセスの実行ファイル。もう居ない・見られないなら null。</summary>
+    public static string? TryGetImagePath(int pid) => pid > 4 ? QueryImagePath(pid).Path : null;
+
     public static int CurrentSessionId()
     {
         ProcessIdToSessionId((uint)Environment.ProcessId, out var session);

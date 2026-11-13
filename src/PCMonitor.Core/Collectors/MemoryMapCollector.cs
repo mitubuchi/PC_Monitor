@@ -18,7 +18,7 @@ public sealed class MemoryMapCollector
 {
     public void Collect(ScanFacts facts, CancellationToken cancel)
     {
-        var devices = DeviceNames();
+        var devices = DevicePaths.Create();
         var denied = 0;
 
         foreach (var process in facts.Processes)
@@ -52,7 +52,7 @@ public sealed class MemoryMapCollector
                 $"{denied} 個のプロセスは、読み込んでいる DLL とメモリの割り当てを確かめられなかった（管理者なら見られる範囲が広がる）", true));
     }
 
-    private static (List<string> Modules, List<ExecutableRegion> Regions) Walk(IntPtr process, List<(string Device, string Drive)> devices)
+    private static (List<string> Modules, List<ExecutableRegion> Regions) Walk(IntPtr process, DevicePaths devices)
     {
         var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var regions = new List<ExecutableRegion>();
@@ -68,7 +68,7 @@ public sealed class MemoryMapCollector
                 if (region.State != MEM_FREE && region.BaseAddress == region.AllocationBase)
                 {
                     var length = K32GetMappedFileNameW(process, region.BaseAddress, name, (uint)name.Capacity);
-                    if (length > 0) files.Add(ToDrivePath(name.ToString(0, (int)length), devices));
+                    if (length > 0) files.Add(devices.ToDrivePath(name.ToString(0, (int)length)));
                 }
             }
             else if (region.State == MEM_COMMIT && IsExecutable(region.Protect))
@@ -79,7 +79,7 @@ public sealed class MemoryMapCollector
                 if (region.Type == MEM_MAPPED)
                 {
                     var length = K32GetMappedFileNameW(process, region.BaseAddress, name, (uint)name.Capacity);
-                    if (length > 0) mappedFile = ToDrivePath(name.ToString(0, (int)length), devices);
+                    if (length > 0) mappedFile = devices.ToDrivePath(name.ToString(0, (int)length));
                 }
                 regions.Add(new ExecutableRegion(
                     region.BaseAddress.ToInt64(),
@@ -102,34 +102,6 @@ public sealed class MemoryMapCollector
 
     private static bool IsWritable(uint protect) =>
         (protect & (PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) != 0;
-
-    /// <summary>\Device\HarddiskVolume3\… を C:\… に直す。直せないものはそのまま返す。</summary>
-    private static string ToDrivePath(string devicePath, List<(string Device, string Drive)> devices)
-    {
-        foreach (var (device, drive) in devices)
-        {
-            if (devicePath.Length > device.Length && devicePath[device.Length] == '\\'
-                && devicePath.StartsWith(device, StringComparison.OrdinalIgnoreCase))
-                return drive + devicePath[device.Length..];
-        }
-        const string network = @"\Device\Mup\";
-        return devicePath.StartsWith(network, StringComparison.OrdinalIgnoreCase)
-            ? @"\\" + devicePath[network.Length..]
-            : devicePath;
-    }
-
-    private static List<(string Device, string Drive)> DeviceNames()
-    {
-        var result = new List<(string, string)>();
-        var buffer = new StringBuilder(512);
-        foreach (var root in Environment.GetLogicalDrives())
-        {
-            var drive = root.TrimEnd('\\');
-            if (QueryDosDeviceW(drive, buffer, (uint)buffer.Capacity) > 0)
-                result.Add((buffer.ToString(), drive));
-        }
-        return result;
-    }
 
     private const uint PROCESS_QUERY_INFORMATION = 0x0400;
     private const uint MEM_COMMIT = 0x1000;
@@ -167,7 +139,4 @@ public sealed class MemoryMapCollector
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern uint K32GetMappedFileNameW(IntPtr process, IntPtr address, StringBuilder fileName, uint size);
-
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern uint QueryDosDeviceW(string deviceName, StringBuilder targetPath, uint max);
 }

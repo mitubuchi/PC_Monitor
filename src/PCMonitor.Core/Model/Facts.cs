@@ -164,5 +164,8 @@ public sealed class ScanFacts
     /// </summary>
     public Dictionary<int, string> JitEngines { get; } = new();
 
+    /// <summary>見張っている間に起きた、キー入力に関わる API の呼び出し（設計書 §11.5）。見張っていなければ空。</summary>
+    public List<Monitoring.KeyApiCall> KeyApiCalls { get; } = new();
+
     public List<ScanNote> Notes { get; } = new();
 }
