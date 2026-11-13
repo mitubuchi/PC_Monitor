@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- WinExe にして、コンソールのウィンドウも出さない（「ウィンドウを出さずに常駐する」の検証） -->
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <RootNamespace>PCMonitor.Probe</RootNamespace>
+  </PropertyGroup>
+
+</Project>

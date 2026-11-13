@@ -1,0 +1,289 @@
+using PCMonitor.Core.Allowlist;
+using PCMonitor.Core.Model;
+using PCMonitor.Core.Reports;
+using PCMonitor.Core.Scoring;
+
+namespace PCMonitor.Core.Tests;
+
+public class ScorerTests
+{
+    private const int Session = 1;
+    private static readonly DateTime Now = new(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc);
+    private static readonly DateTime Old = Now.AddYears(-1);
+
+    private static readonly SignatureInfo Microsoft = new(SignatureStatus.ValidMicrosoft, "Microsoft Windows");
+    private static readonly SignatureInfo Vendor = new(SignatureStatus.ValidOther, "Example Inc.");
+    private static readonly SignatureInfo Unsigned = new(SignatureStatus.None);
+
+    private readonly Dictionary<string, FileFacts> _files = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ScanFacts _facts = new();
+
+    private void File(string path, SignatureInfo signature, bool writable = false, DateTime? created = null, bool hidden = false) =>
+        _files[path] = new FileFacts(path, true, created ?? Old, hidden, "AA", signature, writable);
+
+    private void RunKey(string name, ResolvedCommand command, PersistenceKind kind = PersistenceKind.RunKey, bool autoStarts = true) =>
+        _facts.Persistence.Add(new PersistenceEntry(kind, @"HKCU\Software\Microsoft\Windows\CurrentVersion\Run", name, command, autoStarts));
+
+    private void Process(int pid, string path, bool window = false, int session = Session) =>
+        _facts.Processes.Add(new ProcessFact(pid, 1, Path.GetFileName(path), path, null, window, session));
+
+    private List<Finding> Score() =>
+        new Scorer(new ScoringRules(), @"C:\Windows").Score(
+            _facts, path => _files.TryGetValue(path, out var file) ? file : FileFacts.Missing(path), Now, Session);
+
+    private static ResolvedCommand Direct(string path) => new($"\"{path}\"", path, path);
+
+    private static int Points(Finding finding, IndicatorKind kind) =>
+        finding.Indicators.Where(i => i.Kind == kind).Sum(i => i.Points);
+
+    [Fact]
+    public void 常駐_プロセス_通信に出た同じファイルは_1_件にまとまり_高になる()
+    {
+        const string path = @"C:\Users\u\AppData\Roaming\updater.exe";
+        File(path, Unsigned, writable: true);
+        RunKey("Updater", Direct(path));
+        Process(100, path.ToUpperInvariant());
+        _facts.Endpoints.Add(new EndpointFact("TCP", "0.0.0.0", 4444, null, 0, "LISTEN", 100));
+
+        var finding = Assert.Single(Score());
+        Assert.Equal(FindingSources.Persistence | FindingSources.Process | FindingSources.Network, finding.Sources);
+        Assert.Equal(30 + 20 + 10 + 10 + 20, finding.Score);
+        Assert.Equal(RiskLevel.High, finding.Level);
+        Assert.All(finding.Indicators, i => Assert.False(string.IsNullOrWhiteSpace(i.Evidence)));
+    }
+
+    [Fact]
+    public void 単独で高になる兆候は無い()
+    {
+        var rules = new ScoringRules();
+        var points = new[]
+        {
+            rules.SignatureInvalid, rules.SystemNameWrongLocation, rules.ViaScriptHost, rules.SignatureNone,
+            rules.UnusualPersistence, rules.UserWritableLocation, rules.ListeningNonLoopback,
+            rules.HiddenOrDoubleExtension, rules.Autostart, rules.OutboundConnection,
+            rules.NoVisibleWindow, rules.RecentlyCreated,
+        };
+        Assert.All(points, p => Assert.True(p < rules.HighFrom));
+    }
+
+    [Fact]
+    public void 署名済みの自動起動だけなら_低に留まる()
+    {
+        const string path = @"C:\Windows\System32\spoolsv.exe";
+        File(path, Microsoft, created: Now.AddDays(-1));
+        RunKey("Spooler", Direct(path), PersistenceKind.Service);
+
+        var finding = Assert.Single(Score());
+        Assert.Equal(10, finding.Score);
+        Assert.Equal(RiskLevel.Low, finding.Level);
+    }
+
+    [Fact]
+    public void 作成日時が新しくても_署名が有効なら数えない()
+    {
+        File(@"C:\Program Files\App\signed.exe", Vendor, created: Now.AddDays(-1));
+        File(@"C:\Program Files\App\unsigned.exe", Unsigned, created: Now.AddDays(-1));
+        Process(1, @"C:\Program Files\App\signed.exe", window: true);
+        Process(2, @"C:\Program Files\App\unsigned.exe", window: true);
+
+        var findings = Score();
+        Assert.Equal(0, Points(findings.Single(f => f.Name == "signed.exe"), IndicatorKind.RecentlyCreated));
+        Assert.Equal(10, Points(findings.Single(f => f.Name == "unsigned.exe"), IndicatorKind.RecentlyCreated));
+    }
+
+    [Fact]
+    public void システムのプロセス名を別の場所で名乗ると挙がる()
+    {
+        File(@"C:\Users\u\AppData\Local\svchost.exe", Unsigned, writable: true);
+        File(@"C:\Windows\System32\svchost.exe", Microsoft);
+        Process(1, @"C:\Users\u\AppData\Local\svchost.exe");
+        Process(2, @"C:\Windows\System32\svchost.exe", session: 0);
+
+        var findings = Score();
+        Assert.Equal(40, Points(findings.Single(f => f.Path!.Contains("AppData")), IndicatorKind.SystemNameWrongLocation));
+        Assert.Equal(0, Points(findings.Single(f => f.Path!.Contains("System32")), IndicatorKind.SystemNameWrongLocation));
+    }
+
+    [Fact]
+    public void ファイルが無い登録は_点を付けず情報にする()
+    {
+        RunKey("Gone", Direct(@"C:\Gone\gone.exe"));
+
+        var finding = Assert.Single(Score());
+        Assert.Equal(0, finding.Score);
+        Assert.Equal(RiskLevel.Info, finding.Level);
+        Assert.Contains(finding.Indicators, i => i.Kind == IndicatorKind.MissingFile);
+    }
+
+    [Fact]
+    public void rundll32_経由でも_対象の署名が有効なら数えない()
+    {
+        const string signed = @"C:\Windows\System32\sysmain.dll";
+        const string unsigned = @"C:\ProgramData\x\payload.dll";
+        File(signed, Microsoft);
+        File(unsigned, Unsigned);
+        RunKey("A", new ResolvedCommand("rundll32 sysmain.dll,Entry", @"C:\Windows\System32\rundll32.exe", signed, "rundll32"));
+        RunKey("B", new ResolvedCommand("rundll32 payload.dll,Entry", @"C:\Windows\System32\rundll32.exe", unsigned, "rundll32"));
+
+        var findings = Score();
+        Assert.Equal(0, Points(findings.Single(f => f.Path == signed), IndicatorKind.ViaScriptHost));
+        Assert.Equal(40, Points(findings.Single(f => f.Path == unsigned), IndicatorKind.ViaScriptHost));
+        Assert.Equal(RiskLevel.High, findings.Single(f => f.Path == unsigned).Level);
+    }
+
+    [Fact]
+    public void その場に書かれた命令の自動起動は_ファイル無しの_1_件として中になる()
+    {
+        RunKey("Loader", new ResolvedCommand("powershell -enc SQBFAFgA",
+            @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe", null, "powershell", Inline: true, Encoded: true));
+
+        var finding = Assert.Single(Score());
+        Assert.Null(finding.Path);
+        Assert.NotNull(finding.Sha256);
+        Assert.Equal(40 + 10, finding.Score);
+        Assert.Equal(RiskLevel.Medium, finding.Level);
+    }
+
+    [Fact]
+    public void 署名の無いスクリプトは_未署名ではなくスクリプト経由として数える()
+    {
+        const string script = @"C:\Scripts\job.ps1";
+        File(script, Unsigned);
+        RunKey("Job", new ResolvedCommand("powershell -File job.ps1", "powershell.exe", script, "powershell"), PersistenceKind.ScheduledTask);
+
+        var finding = Assert.Single(Score());
+        Assert.Equal(0, Points(finding, IndicatorKind.SignatureNone));
+        Assert.Equal(40, Points(finding, IndicatorKind.ViaScriptHost));
+    }
+
+    [Fact]
+    public void 無効にされた登録は_自動起動として数えない()
+    {
+        const string path = @"C:\Program Files\App\app.exe";
+        File(path, Vendor);
+        RunKey("App", Direct(path), autoStarts: false);
+
+        var finding = Assert.Single(Score());
+        Assert.Equal(0, finding.Score);
+        Assert.Single(finding.Persistence);
+    }
+
+    [Fact]
+    public void ふつう使われない常駐箇所は_それだけで挙がる()
+    {
+        const string path = @"C:\Program Files\Tool\dbg.exe";
+        File(path, Vendor);
+        RunKey("notepad.exe", Direct(path), PersistenceKind.Ifeo);
+
+        var finding = Assert.Single(Score());
+        Assert.Equal(30 + 10, finding.Score);
+    }
+
+    [Fact]
+    public void ウィンドウの有無は_同じセッションのプロセスだけで見る()
+    {
+        File(@"C:\Program Files\Svc\svc.exe", Vendor);
+        File(@"C:\Program Files\Tray\tray.exe", Vendor);
+        File(@"C:\Program Files\Gui\gui.exe", Vendor);
+        Process(1, @"C:\Program Files\Svc\svc.exe", session: 0);
+        Process(2, @"C:\Program Files\Tray\tray.exe");
+        Process(3, @"C:\Program Files\Gui\gui.exe");
+        Process(4, @"C:\Program Files\Gui\gui.exe", window: true);
+
+        var findings = Score();
+        Assert.Equal(0, findings.Single(f => f.Name == "svc.exe").Score);
+        Assert.Equal(10, findings.Single(f => f.Name == "tray.exe").Score);
+        Assert.Equal(0, findings.Single(f => f.Name == "gui.exe").Score);
+    }
+
+    [Fact]
+    public void 通信は_ループバックと_待ち受けポートで受けた接続を数えない()
+    {
+        const string path = @"C:\Program Files\Srv\srv.exe";
+        File(path, Vendor);
+        Process(7, path, window: true);
+        _facts.Endpoints.Add(new EndpointFact("TCP", "127.0.0.1", 5000, null, 0, "LISTEN", 7));
+        _facts.Endpoints.Add(new EndpointFact("TCP", "::1", 5000, null, 0, "LISTEN", 7));
+        _facts.Endpoints.Add(new EndpointFact("TCP", "192.168.0.2", 5000, "192.168.0.9", 51000, "ESTABLISHED", 7));
+        _facts.Endpoints.Add(new EndpointFact("TCP", "127.0.0.1", 52000, "127.0.0.1", 9000, "ESTABLISHED", 7));
+        _facts.Endpoints.Add(new EndpointFact("UDP", "0.0.0.0", 5353, null, 0, "BOUND", 7));
+
+        Assert.Equal(0, Assert.Single(Score()).Score);
+
+        _facts.Endpoints.Add(new EndpointFact("TCP", "192.168.0.2", 53000, "203.0.113.5", 443, "ESTABLISHED", 7));
+        _facts.Endpoints.Add(new EndpointFact("TCP", "::", 8080, null, 0, "LISTEN", 7));
+        Assert.Equal(10 + 20, Assert.Single(Score()).Score);
+    }
+
+    [Fact]
+    public void 許可リストは_ハッシュが変わると外れて_変わったことを挙げる()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "pcmonitor-tests-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new AllowlistStore(Path.Combine(directory, "allowlist.json"));
+            var finding = new Finding { Key = @"file:c:\x\a.exe", Name = "a.exe", Path = @"C:\x\a.exe", Sha256 = "AA", Score = 40 };
+            Assert.True(store.Add(finding));
+            Assert.False(store.Add(new Finding { Key = "file:nohash", Name = "n" }));
+
+            // 読み直しても残っている。同じハッシュなら許可、変われば外れる
+            var reloaded = new AllowlistStore(Path.Combine(directory, "allowlist.json"));
+            var same = new Finding { Key = finding.Key, Name = "a.exe", Sha256 = "aa", Score = 40 };
+            var changed = new Finding { Key = finding.Key, Name = "a.exe", Sha256 = "BB", Score = 40 };
+            reloaded.Apply(new[] { same });
+            reloaded.Apply(new[] { changed });
+
+            Assert.True(same.IsAllowed);
+            Assert.False(changed.IsAllowed);
+            Assert.Contains(changed.Indicators, i => i.Kind == IndicatorKind.AllowedButChanged && i.Points == 0);
+            Assert.Equal(40, changed.Score);
+
+            // BOM 無しで保存されている
+            var bytes = System.IO.File.ReadAllBytes(Path.Combine(directory, "allowlist.json"));
+            Assert.NotEqual(0xEF, bytes[0]);
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void 差分は_前回に無かった項目だけに印を付け_初回は付けない()
+    {
+        var findings = new[]
+        {
+            new Finding { Key = "file:a", Name = "a" },
+            new Finding { Key = "file:b", Name = "b" },
+        };
+
+        Assert.False(ScanDiff.MarkNew(findings, null));
+        Assert.All(findings, f => Assert.False(f.IsNew));
+
+        var previous = new LastScan(Now, new List<LastScanItem> { new("file:a", null, 0) });
+        Assert.True(ScanDiff.MarkNew(findings, previous));
+        Assert.False(findings[0].IsNew);
+        Assert.True(findings[1].IsNew);
+    }
+
+    [Fact]
+    public void CSV_は区切り文字と式の形を無害にする()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "pcmonitor-tests-" + Guid.NewGuid().ToString("N") + ".csv");
+        try
+        {
+            ReportWriter.WriteCsv(path, new[]
+            {
+                new Finding { Key = "k", Name = "=cmd|' /c calc'!A1", Path = @"C:\a,b\""x"".exe" },
+            });
+            var lines = System.IO.File.ReadAllLines(path);
+            Assert.Equal(2, lines.Length);
+            Assert.Contains("'=cmd|' /c calc'!A1", lines[1]);
+            Assert.Contains(@"""C:\a,b\""""x"""".exe""", lines[1]);
+        }
+        finally
+        {
+            System.IO.File.Delete(path);
+        }
+    }
+}

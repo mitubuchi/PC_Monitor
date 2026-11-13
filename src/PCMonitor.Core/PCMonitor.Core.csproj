@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <RootNamespace>PCMonitor.Core</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- WMI（Win32_Process のコマンドライン、root\subscription のイベント購読）に使う -->
+    <PackageReference Include="System.Management" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="PCMonitor.Core.Tests" />
+  </ItemGroup>
+
+</Project>
