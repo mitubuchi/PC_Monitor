@@ -6,14 +6,18 @@ using System.Windows;
 using PCMonitor.Core;
 using PCMonitor.Core.Allowlist;
 using PCMonitor.Core.Model;
+using PCMonitor.Core.Monitoring;
 using PCMonitor.Core.Reports;
 using ReactiveUI;
 
 namespace PCMonitor.Wpf.ViewModels;
 
-public sealed class MainViewModel : ReactiveObject
+public sealed class MainViewModel : ReactiveObject, IDisposable
 {
     private readonly Scanner _scanner = new();
+    private readonly KeyApiMonitor _monitor = new();
+    private bool _isMonitoring;
+    private string _monitorStatus = "";
     private List<FindingRow> _all = new();
     private ScanResult? _result;
     private CancellationTokenSource? _cancel;
@@ -47,11 +51,20 @@ public sealed class MainViewModel : ReactiveObject
         ToggleAllowCommand = ReactiveCommand.Create(ToggleAllow, hasHash);
         ExportCsvCommand = ReactiveCommand.Create(ExportCsv, hasResult);
         ExportJsonCommand = ReactiveCommand.Create(ExportJson, hasResult);
+        // 見張りは管理者でしか始められない。通常の権限のときは、押せない状態にして理由を出す
+        ToggleMonitorCommand = ReactiveCommand.Create(ToggleMonitor, Observable.Return(IsElevated));
+
+        // 呼び出しは受け取りのスレッドから知らされる。画面のスレッドへ移してから件数を直す
+        Observable.FromEvent<KeyApiCall>(handler => _monitor.CallObserved += handler, handler => _monitor.CallObserved -= handler)
+            .Sample(TimeSpan.FromMilliseconds(500))
+            .ObserveOn(RxSchedulers.MainThreadScheduler)
+            .Subscribe(_ => UpdateMonitorStatus());
+        UpdateMonitorStatus();
 
         foreach (var command in new IHandleObservableErrors[]
                  {
                      ScanCommand, CancelCommand, RestartAsAdminCommand, OpenLocationCommand,
-                     CopyHashCommand, ToggleAllowCommand, ExportCsvCommand, ExportJsonCommand,
+                     CopyHashCommand, ToggleAllowCommand, ExportCsvCommand, ExportJsonCommand, ToggleMonitorCommand,
                  })
         {
             command.ThrownExceptions.Subscribe(ex => ShowError(ex.Message));
@@ -81,6 +94,19 @@ public sealed class MainViewModel : ReactiveObject
     public ReactiveCommand<Unit, Unit> ToggleAllowCommand { get; }
     public ReactiveCommand<Unit, Unit> ExportCsvCommand { get; }
     public ReactiveCommand<Unit, Unit> ExportJsonCommand { get; }
+    public ReactiveCommand<Unit, Unit> ToggleMonitorCommand { get; }
+
+    public bool IsMonitoring
+    {
+        get => _isMonitoring;
+        private set => this.RaiseAndSetIfChanged(ref _isMonitoring, value);
+    }
+
+    public string MonitorStatus
+    {
+        get => _monitorStatus;
+        private set => this.RaiseAndSetIfChanged(ref _monitorStatus, value);
+    }
 
     public bool IsScanning
     {
@@ -106,7 +132,7 @@ public sealed class MainViewModel : ReactiveObject
         set => this.RaiseAndSetIfChanged(ref _showAllowed, value);
     }
 
-    /// <summary>0: すべて、1: 常駐、2: プロセス、3: 通信、4: DLL</summary>
+    /// <summary>0: すべて、1: 常駐、2: プロセス、3: 通信、4: DLL、5: キー入力</summary>
     public int KindFilter
     {
         get => _kindFilter;
@@ -155,7 +181,9 @@ public sealed class MainViewModel : ReactiveObject
             // Progress<T> は作ったスレッド（画面）へ戻して知らせる
             var progress = new Progress<string>(text => Progress = text);
             var token = _cancel.Token;
-            var result = await Task.Run(() => _scanner.Scan(progress, token), token);
+            // 見張っていたなら、その間に拾った呼び出しを点検に渡す
+            var keyApi = _monitor.Observation();
+            var result = await Task.Run(() => _scanner.Scan(progress, token, keyApi), token);
 
             _result = result;
             _all = result.Findings.Select(f => new FindingRow(f)).ToList();
@@ -201,6 +229,7 @@ public sealed class MainViewModel : ReactiveObject
             2 => FindingSources.Process,
             3 => FindingSources.Network,
             4 => FindingSources.Module,
+            5 => FindingSources.KeyApi,
             _ => FindingSources.None,
         };
         if (source != FindingSources.None) rows = rows.Where(r => r.Finding.Sources.HasFlag(source));
@@ -276,6 +305,49 @@ public sealed class MainViewModel : ReactiveObject
         // 絞り込みにかかわらず、点検の結果すべてを書き出す
         ReportWriter.WriteJson(path, _result);
         Progress = $"JSON を書き出しました: {path}";
+    }
+
+    // ---- キー入力 API の監視（設計書 §11.5） ----
+
+    private void ToggleMonitor()
+    {
+        if (_monitor.IsRunning)
+        {
+            _monitor.Stop();
+        }
+        else
+        {
+            try
+            {
+                _monitor.Start();
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or InvalidOperationException
+                                           or System.Runtime.InteropServices.COMException or Win32Exception)
+            {
+                ShowError("キー入力 API の監視を始められませんでした。\n" + ex.Message);
+            }
+        }
+        IsMonitoring = _monitor.IsRunning;
+        UpdateMonitorStatus();
+    }
+
+    private void UpdateMonitorStatus()
+    {
+        if (!IsElevated)
+            MonitorStatus = "キー入力 API の監視: 管理者として起動すると使えます";
+        else if (_monitor.IsRunning)
+            MonitorStatus = $"キー入力 API を監視中（{_monitor.StartedUtc?.ToLocalTime():HH:mm:ss} から、{_monitor.Count} 件）。スキャンすると結果に入ります";
+        else if (_monitor.StartedUtc is not null)
+            MonitorStatus = $"監視を止めました（{_monitor.Count} 件を保持）。スキャンすると結果に入ります";
+        else
+            MonitorStatus = "キー入力 API の監視: 止まっています";
+    }
+
+    public void Dispose()
+    {
+        // セッションを残さない。残ると、次に始めるまでイベントを受け続ける
+        _monitor.Dispose();
+        _cancel?.Cancel();
     }
 
     // ---- 権限 ----

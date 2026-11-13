@@ -34,6 +34,11 @@ public sealed class FindingRow : ReactiveObject
             .Distinct()
             .ToList();
 
+        KeyApiCalls = finding.KeyApiCalls
+            .OrderBy(c => c.TimeUtc)
+            .Select(c => $"{c.TimeUtc.ToLocalTime():HH:mm:ss}　PID {c.Pid}　{c.Description}")
+            .ToList();
+
         LoadedBy = finding.LoadedBy
             .GroupBy(h => (h.ProcessName, h.Publisher))
             .Select(g => $"{g.Key.ProcessName}（{g.Key.Publisher ?? "発行元不明"}）　PID {string.Join("、", g.Select(h => h.Pid))}")
@@ -74,7 +79,9 @@ public sealed class FindingRow : ReactiveObject
     public IReadOnlyList<string> Processes { get; }
     public IReadOnlyList<string> Endpoints { get; }
     public IReadOnlyList<string> LoadedBy { get; }
+    public IReadOnlyList<string> KeyApiCalls { get; }
 
+    public bool HasKeyApiCalls => KeyApiCalls.Count > 0;
     public bool HasLoadedBy => LoadedBy.Count > 0;
     public bool HasRegistrations => Registrations.Count > 0;
     public bool HasProcesses => Processes.Count > 0;

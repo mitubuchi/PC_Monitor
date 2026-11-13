@@ -65,6 +65,19 @@
                             Visibility="{Binding IsScanning, Converter={StaticResource BoolToVisibility}}" />
                     <Button DockPanel.Dock="Left" Content="管理者として再起動" Command="{Binding RestartAsAdminCommand}"
                             ToolTip="ほかの利用者とシステムのプロセス、一部のタスク、WMI イベント購読は、管理者でないと見られません。" />
+                    <Button DockPanel.Dock="Left" Command="{Binding ToggleMonitorCommand}" ToolTipService.ShowOnDisabled="True"
+                            ToolTip="キーボード フックの設置や、キーボードの生入力の登録を見張ります（管理者のみ）。&#x0a;分かるのは、見張りを始めてから止めるまでの間に起きた呼び出しだけです。&#x0a;すでに設置されているフックは出てきません。疑わしいアプリは、見張りを始めてから起動し直してください。&#x0a;キー入力そのものは受け取りません。">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                <Setter Property="Content" Value="キー入力 API の監視を開始" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsMonitoring}" Value="True">
+                                        <Setter Property="Content" Value="監視を停止" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
 
                     <Button DockPanel.Dock="Right" Content="JSON" Margin="0" Command="{Binding ExportJsonCommand}"
                             ToolTip="点検の結果すべてを JSON に書き出します。" />
@@ -91,12 +104,15 @@
                         <ComboBoxItem Content="プロセス" />
                         <ComboBoxItem Content="通信" />
                         <ComboBoxItem Content="DLL" />
+                        <ComboBoxItem Content="キー入力" />
                     </ComboBox>
                     <TextBlock DockPanel.Dock="Right" Text="種別" VerticalAlignment="Center" Margin="16,0,8,0" Foreground="{StaticResource Subtle}" />
                 </DockPanel>
 
                 <DockPanel Margin="0,10,0,0" LastChildFill="True">
                     <CheckBox DockPanel.Dock="Right" Content="許可済みも表示" IsChecked="{Binding ShowAllowed}" VerticalAlignment="Center" Margin="16,0,0,0" />
+                    <TextBlock DockPanel.Dock="Right" Text="{Binding MonitorStatus}" VerticalAlignment="Center" Margin="16,0,0,0"
+                               Foreground="{StaticResource Subtle}" TextTrimming="CharacterEllipsis" MaxWidth="460" />
                     <ProgressBar DockPanel.Dock="Left" Width="120" Height="6" IsIndeterminate="True" Margin="0,0,10,0" VerticalAlignment="Center"
                                  Visibility="{Binding IsScanning, Converter={StaticResource BoolToVisibility}}" />
                     <TextBlock Text="{Binding Progress}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
@@ -288,6 +304,11 @@
                             <StackPanel Visibility="{Binding HasRegistrations, Converter={StaticResource BoolToVisibility}}">
                                 <TextBlock Style="{StaticResource SectionTitle}" Text="常駐箇所への登録" />
                                 <ItemsControl ItemsSource="{Binding Registrations}" ItemTemplate="{StaticResource DetailLine}" />
+                            </StackPanel>
+
+                            <StackPanel Visibility="{Binding HasKeyApiCalls, Converter={StaticResource BoolToVisibility}}">
+                                <TextBlock Style="{StaticResource SectionTitle}" Text="見張っている間に呼んだ、キー入力に関わる API" />
+                                <ItemsControl ItemsSource="{Binding KeyApiCalls}" ItemTemplate="{StaticResource DetailLine}" />
                             </StackPanel>
 
                             <StackPanel Visibility="{Binding HasLoadedBy, Converter={StaticResource BoolToVisibility}}">

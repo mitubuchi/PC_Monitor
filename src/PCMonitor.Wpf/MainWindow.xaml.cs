@@ -9,7 +9,10 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        DataContext = new MainViewModel { PickSavePath = PickSavePath };
+        var viewModel = new MainViewModel { PickSavePath = PickSavePath };
+        DataContext = viewModel;
+        // 閉じるときに、キー入力 API の監視のセッションを止める
+        Closed += (_, _) => viewModel.Dispose();
     }
 
     private string? PickSavePath(string fileName, string filter)
