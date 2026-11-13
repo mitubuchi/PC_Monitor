@@ -9,5 +9,8 @@ obj/
 # テストの結果
 /TestResults/
 
+# 実測の結果（この PC のプロセス名などが入る）
+/artifacts/
+
 # Claude Code のローカル設定
 /.claude/settings.local.json

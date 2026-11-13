@@ -335,10 +335,10 @@ Finding（1 件の候補）
 | 親子関係の異常 | 実装済み（2026-11-13） | 文書を開くアプリがシェルを起動している。システムのプロセスの親が決まった相手ではない |
 | 読み込み DLL の点検 | 実装済み（2026-11-13） | 署名済みのプロセスに読み込まれた、署名の有効でない DLL |
 | メモリの点検 | 実装済み（2026-11-13） | `VirtualQueryEx` で、ファイルの裏付けが無い実行可能な領域を探す（インジェクションの痕跡）。JIT を持つプロセスは見ない（§11.3） |
-| ETW によるキー入力 API の監視 | 未着手 | Win32k のプロバイダーで、`SetWindowsHookEx`・`GetAsyncKeyState`・`RegisterRawInputDevices` の呼び出し元を記録する。管理者権限が要る |
+| ETW によるキー入力 API の監視 | 調査中（§11.5） | Win32k のプロバイダーで、`SetWindowsHookEx`・`GetAsyncKeyState`・`RegisterRawInputDevices` の呼び出し元を記録する。管理者権限が要る |
 
 ⚠️ ETW のイベント番号と取れる項目は、**実機で確かめてから設計に書く**。
-Windows の版で変わりうるので、記憶で決めない。
+Windows の版で変わりうるので、記憶で決めない。定義を読んだ結果は §11.5。
 ETW だけは「その瞬間を写す」のではなく「一定時間見張る」動きになるので、画面にも監視の開始と停止が要る。
 
 ### 11.1 親子関係の異常
@@ -449,6 +449,71 @@ pcmonitor --memory-map      プロセスごとに、該当する領域の個数�
 `Microsoft.Web.WebView2.Core.dll` は、埋め込み署名の証明書のつながりを手元だけでは組めず「無効」と出たが、
 カタログでは Microsoft の署名として確認できた。ネットワークに出ない方針のままで済む。
 中身が書き換えられていれば、カタログにもパッケージの記録にも合わないので、ここで有効になることはない。
+
+### 11.5 ETW によるキー入力 API の監視 — 調査（2026-11-13）
+
+まだ実装していない。**定義を読むところまで**が済み、**実際に流れるかの確認**が残っている。
+
+#### 確かめたこと（この PC のプロバイダーの定義から。管理者でなくても読める）
+
+- Windows 11 25H2（10.0.26200）
+- プロバイダー: `Microsoft-Windows-Win32k`、GUID `{8c416c79-d49b-4f01-a467-e56d3aa8234c}`、イベントは 369 個
+- キーワード **`AuditApiCalls`（`0x400`）** が付いたイベントは 4 つだけ。どれもレベル 4（Informational）、
+  説明文は付いていない
+
+| ID | 項目 | 対応する API（項目名からの推定） |
+|---|---|---|
+| 1000 | `eventMin`, `eventMax`, `idEventProcess`, `idEventThread`, `Flags`, `HookInstance` | `SetWinEventHook`（キーとは無関係。ウィンドウの出来事の通知） |
+| 1001 | `ReturnValue`, `UsagePage`, `Usage`, `Flags`, `hwndTarget`, `ThreadStartAddress`, `ThreadCreateTime`, `ThreadId`, `cWindows`, `cVisWindows`, `ThreadInfoFlags`, `ProcessId`, `ProcessCreateTime`, `ProcessStartKey`, `ThreadStartAddressMappedModuleName`, `ThreadStartAddressQueryResult`, `ThreadStartAddressVad…`（割り当ての情報 5 項目） | `RegisterRawInputDevices`。キーボードは `UsagePage`=1・`Usage`=6 |
+| 1002 | `FilterType`, `pstrLib`, `hmod`, `pfnFilterProc`, `ReturnValue` | `SetWindowsHookEx`。`FilterType` がフックの種類（`WH_KEYBOARD`=2、`WH_KEYBOARD_LL`=13）、`pstrLib` がフックの DLL |
+| 1003 | `PID`, `MsSinceLastKeyEvent`, `BackgroundCallCount` | `GetAsyncKeyState` を、前面でないプロセスが呼んだとき |
+
+- 項目名に Hook・RawInput・Key を含むイベントは、ほかには ID 4（UIPI。フックが権限の壁で止められた記録）だけだった
+- 1001 には、登録したスレッドの開始番地と、その番地がどのモジュールに属すか
+  （`ThreadStartAddressMappedModuleName`）まで入っている。**ファイルの裏付けが無い場所から始まったスレッドが
+  キーボードの生入力を登録した**、という形を 1 つのイベントで見分けられる見込み
+- 1002 は呼び出したプロセスが項目に無い。イベントのヘッダーのプロセス ID を使うことになる
+
+#### まだ確かめていないこと（管理者で流して確かめる）
+
+1. 4 つのイベントが、キーワード `0x400` を有効にしたセッションに**実際に流れてくるか**
+   （保護されたプロセスにしか渡されない種類のイベントかもしれない）
+2. 上の表の「対応する API」が合っているか
+3. ヘッダーのプロセス ID が、API を呼んだプロセスを指すか
+4. 1003 が出る条件（1 回の呼び出しごとか、回数や間隔がしきい値を超えたときだけか）
+5. ふだんの状態で、どのくらいの量が流れるか（正規のソフトがどれだけ呼んでいるか）
+
+確かめるためのスクリプトを `tools/etw-probe.ps1` に置いた。**管理者のターミナルで**実行する
+（ETW のセッションを始められるのは管理者だけで、Claude Code からは昇格できない）。
+
+```
+dotnet build tests\PCMonitor.Probe
+pwsh -File tools\etw-probe.ps1
+```
+
+`logman` でセッションを始め、Probe を `--key-apis` で動かし、止めてから `Get-WinEvent` で読んで、
+`artifacts\etw\win32k-audit.txt` にまとめを書く（`artifacts\` は git に入れない）。
+記録されるのは API 呼び出しの監査イベントだけで、キー入力そのものは記録されない。
+
+Probe の `--key-apis` は、4 つの API を**何も取得しない形で**呼ぶ。
+
+| API | 呼び方 |
+|---|---|
+| `SetWindowsHookEx(WH_KEYBOARD_LL)` | 設置して、すぐに外す。メッセージを処理しないスレッドなので、フックの関数は一度も呼ばれない |
+| `RegisterRawInputDevices`（キーボード） | 登録して、すぐに取り消す。ウィンドウを持たないので、入力は届かない |
+| `GetAsyncKeyState` | F24（ふつうのキーボードに無いキー）だけを 20 ミリ秒おきに問い合わせ、結果は捨てる |
+| `SetWinEventHook` | 前面のウィンドウが変わった通知を登録して、すぐに外す |
+
+§12 の「キー入力の取得は行わない」は、このとおり守っている。
+
+#### 実装に入るときに決めること
+
+- **動きが変わる。** いままでの点検は「その瞬間を写す」だったが、ETW は「見張っている間に起きたこと」しか分からない。
+  すでに設置されているフックは、見張りを始めても出てこない。画面には、監視の開始と停止が要る
+- 監視は管理者でしか始められない。通常の権限のときは、ボタンを押せない状態にして理由を出す
+- セッションを自分で持つ（リアルタイムで受け取る）か、`logman` と同じくファイルに書いてから読むか
+- 兆候の付け方。たとえば「`WH_KEYBOARD_LL` を設置した」「キーボードの生入力を登録した」を、
+  第 1 段階の兆候（未署名、常駐、ウィンドウ無し）と重ねる
 
 ## 12. 確認のしかた
 
