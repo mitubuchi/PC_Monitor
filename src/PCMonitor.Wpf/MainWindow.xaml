@@ -90,6 +90,7 @@
                         <ComboBoxItem Content="常駐" />
                         <ComboBoxItem Content="プロセス" />
                         <ComboBoxItem Content="通信" />
+                        <ComboBoxItem Content="DLL" />
                     </ComboBox>
                     <TextBlock DockPanel.Dock="Right" Text="種別" VerticalAlignment="Center" Margin="16,0,8,0" Foreground="{StaticResource Subtle}" />
                 </DockPanel>
@@ -287,6 +288,11 @@
                             <StackPanel Visibility="{Binding HasRegistrations, Converter={StaticResource BoolToVisibility}}">
                                 <TextBlock Style="{StaticResource SectionTitle}" Text="常駐箇所への登録" />
                                 <ItemsControl ItemsSource="{Binding Registrations}" ItemTemplate="{StaticResource DetailLine}" />
+                            </StackPanel>
+
+                            <StackPanel Visibility="{Binding HasLoadedBy, Converter={StaticResource BoolToVisibility}}">
+                                <TextBlock Style="{StaticResource SectionTitle}" Text="この DLL を読み込んでいるプロセス" />
+                                <ItemsControl ItemsSource="{Binding LoadedBy}" ItemTemplate="{StaticResource DetailLine}" />
                             </StackPanel>
 
                             <StackPanel Visibility="{Binding HasProcesses, Converter={StaticResource BoolToVisibility}}">

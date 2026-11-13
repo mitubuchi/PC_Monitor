@@ -106,7 +106,7 @@ public sealed class MainViewModel : ReactiveObject
         set => this.RaiseAndSetIfChanged(ref _showAllowed, value);
     }
 
-    /// <summary>0: すべて、1: 常駐、2: プロセス、3: 通信</summary>
+    /// <summary>0: すべて、1: 常駐、2: プロセス、3: 通信、4: DLL</summary>
     public int KindFilter
     {
         get => _kindFilter;
@@ -200,6 +200,7 @@ public sealed class MainViewModel : ReactiveObject
             1 => FindingSources.Persistence,
             2 => FindingSources.Process,
             3 => FindingSources.Network,
+            4 => FindingSources.Module,
             _ => FindingSources.None,
         };
         if (source != FindingSources.None) rows = rows.Where(r => r.Finding.Sources.HasFlag(source));

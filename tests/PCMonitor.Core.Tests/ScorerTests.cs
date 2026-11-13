@@ -24,8 +24,8 @@ public class ScorerTests
     private void RunKey(string name, ResolvedCommand command, PersistenceKind kind = PersistenceKind.RunKey, bool autoStarts = true) =>
         _facts.Persistence.Add(new PersistenceEntry(kind, @"HKCU\Software\Microsoft\Windows\CurrentVersion\Run", name, command, autoStarts));
 
-    private void Process(int pid, string path, bool window = false, int session = Session) =>
-        _facts.Processes.Add(new ProcessFact(pid, 1, Path.GetFileName(path), path, null, window, session));
+    private void Process(int pid, string path, bool window = false, int session = Session, int parent = 1, DateTime? started = null) =>
+        _facts.Processes.Add(new ProcessFact(pid, parent, Path.GetFileName(path), path, null, window, session, started));
 
     private List<Finding> Score() =>
         new Scorer(new ScoringRules(), @"C:\Windows").Score(
@@ -62,6 +62,7 @@ public class ScorerTests
             rules.UnusualPersistence, rules.UserWritableLocation, rules.ListeningNonLoopback,
             rules.HiddenOrDoubleExtension, rules.Autostart, rules.OutboundConnection,
             rules.NoVisibleWindow, rules.RecentlyCreated,
+            rules.UnusualParent, rules.ModuleInSignedProcess, rules.ModuleAcrossPublishers, rules.SignatureNoneModule,
         };
         Assert.All(points, p => Assert.True(p < rules.HighFrom));
     }
@@ -213,6 +214,164 @@ public class ScorerTests
         _facts.Endpoints.Add(new EndpointFact("TCP", "192.168.0.2", 53000, "203.0.113.5", 443, "ESTABLISHED", 7));
         _facts.Endpoints.Add(new EndpointFact("TCP", "::", 8080, null, 0, "LISTEN", 7));
         Assert.Equal(10 + 20, Assert.Single(Score()).Score);
+    }
+
+    // ---- 第 2 段階: 読み込み DLL ----
+
+    [Fact]
+    public void 署名済みのプロセスに載った未署名の_DLL_は_低く数えて挙げる()
+    {
+        const string host = @"C:\Program Files\App\app.exe";
+        const string dll = @"C:\Program Files\App\plugin.dll";
+        File(host, Vendor);
+        File(dll, Unsigned);
+        File(@"C:\Program Files\App\signed.dll", Vendor);
+        Process(10, host, window: true);
+        _facts.Modules[10] = new List<string> { host, dll, @"C:\Program Files\App\signed.dll" };
+
+        var findings = Score();
+        Assert.DoesNotContain(findings, f => f.Name == "signed.dll");
+        var finding = findings.Single(f => f.Name == "plugin.dll");
+        Assert.Equal(FindingSources.Module, finding.Sources);
+        Assert.Equal(10 + 10, finding.Score);
+        Assert.Equal(RiskLevel.Low, finding.Level);
+    }
+
+    [Fact]
+    public void 本体が未署名なら_その_DLL_は挙げない()
+    {
+        const string host = @"C:\Tools\tool.exe";
+        File(host, Unsigned);
+        File(@"C:\Tools\tool.dll", Unsigned);
+        Process(10, host, window: true);
+        _facts.Modules[10] = new List<string> { host, @"C:\Tools\tool.dll" };
+
+        Assert.Equal("tool.exe", Assert.Single(Score()).Name);
+    }
+
+    [Fact]
+    public void 発行元の違うプログラムに広く入り込んだ_DLL_は_書き込める場所にあれば高になる()
+    {
+        const string dll = @"C:\Users\u\AppData\Roaming\hook.dll";
+        File(dll, Unsigned, writable: true, created: Now.AddDays(-1));
+        File(@"C:\Windows\explorer.exe", Microsoft);
+        File(@"C:\Program Files\A\a.exe", Vendor);
+        File(@"C:\Program Files\B\b.exe", new SignatureInfo(SignatureStatus.ValidOther, "Other Co."));
+        Process(1, @"C:\Windows\explorer.exe", window: true);
+        Process(2, @"C:\Program Files\A\a.exe", window: true);
+        Process(3, @"C:\Program Files\B\b.exe", window: true);
+        foreach (var pid in new[] { 1, 2, 3 }) _facts.Modules[pid] = new List<string> { dll };
+
+        var finding = Score().Single(f => f.Name == "hook.dll");
+        Assert.Equal(15, Points(finding, IndicatorKind.ModuleAcrossPublishers));
+        Assert.Equal(10 + 20 + 10 + 10 + 15, finding.Score);
+        Assert.Equal(RiskLevel.High, finding.Level);
+    }
+
+    [Fact]
+    public void 同じ発行元の中だけで使われる_DLL_は_広く入り込んだとは数えない()
+    {
+        const string dll = @"C:\Program Files\Git\usr\bin\msys-2.0.dll";
+        File(dll, Unsigned);
+        foreach (var (pid, name) in new[] { (1, "git.exe"), (2, "bash.exe"), (3, "sh.exe") })
+        {
+            File($@"C:\Program Files\Git\bin\{name}", Vendor);
+            Process(pid, $@"C:\Program Files\Git\bin\{name}", window: true);
+            _facts.Modules[pid] = new List<string> { dll };
+        }
+
+        var finding = Score().Single(f => f.Name == "msys-2.0.dll");
+        Assert.Equal(0, Points(finding, IndicatorKind.ModuleAcrossPublishers));
+        Assert.Equal(3, finding.LoadedBy.Count);
+    }
+
+    [Fact]
+    public void NET_Framework_がその場で作った写しは_書き換えられない限り挙げない()
+    {
+        const string host = @"C:\Program Files\App\app.exe";
+        const string locked = @"C:\Windows\assembly\NativeImages_v4.0.30319_64\System\abc\System.ni.dll";
+        const string open = @"C:\Windows\assembly\NativeImages_v4.0.30319_64\Evil\abc\Evil.ni.dll";
+        File(host, Vendor);
+        File(locked, Unsigned);
+        File(open, Unsigned, writable: true);
+        Process(10, host, window: true);
+        _facts.Modules[10] = new List<string> { locked, open };
+
+        var findings = Score();
+        Assert.DoesNotContain(findings, f => f.Name == "System.ni.dll");
+        Assert.Contains(findings, f => f.Name == "Evil.ni.dll");
+    }
+
+    // ---- 第 2 段階: 親子関係 ----
+
+    [Fact]
+    public void 文書を開くアプリがシェルを起動していると挙がる()
+    {
+        File(@"C:\Program Files\Office\WINWORD.EXE", Microsoft);
+        File(@"C:\Windows\System32\cmd.exe", Microsoft);
+        Process(100, @"C:\Program Files\Office\WINWORD.EXE", window: true, started: Now.AddMinutes(-10));
+        Process(200, @"C:\Windows\System32\cmd.exe", window: true, parent: 100, started: Now.AddMinutes(-1));
+
+        var finding = Score().Single(f => f.Name == "cmd.exe");
+        Assert.Equal(30, Points(finding, IndicatorKind.UnusualParent));
+    }
+
+    [Fact]
+    public void 親の番号が使い回されているときは_親子とみなさない()
+    {
+        File(@"C:\Program Files\Office\WINWORD.EXE", Microsoft);
+        File(@"C:\Windows\System32\cmd.exe", Microsoft);
+        // cmd のほうが先に起動している。番号 100 は、あとから Word に付いただけ
+        Process(100, @"C:\Program Files\Office\WINWORD.EXE", window: true, started: Now.AddMinutes(-1));
+        Process(200, @"C:\Windows\System32\cmd.exe", window: true, parent: 100, started: Now.AddMinutes(-10));
+
+        Assert.All(Score(), f => Assert.Equal(0, Points(f, IndicatorKind.UnusualParent)));
+    }
+
+    [Fact]
+    public void ブラウザーが_cmd_を起動するのは挙げない()
+    {
+        File(@"C:\Program Files\Google\Chrome\chrome.exe", Vendor);
+        File(@"C:\Windows\System32\cmd.exe", Microsoft);
+        Process(100, @"C:\Program Files\Google\Chrome\chrome.exe", window: true, started: Now.AddMinutes(-10));
+        Process(200, @"C:\Windows\System32\cmd.exe", window: true, parent: 100, started: Now.AddMinutes(-1));
+
+        Assert.All(Score(), f => Assert.Equal(0, Points(f, IndicatorKind.UnusualParent)));
+    }
+
+    [Fact]
+    public void svchost_の親が_services_でなければ_起動時刻が分からなくても挙がる()
+    {
+        File(@"C:\Windows\System32\svchost.exe", Microsoft);
+        File(@"C:\Windows\System32\services.exe", Microsoft);
+        File(@"C:\Users\u\AppData\Local\loader.exe", Unsigned, writable: true);
+        Process(600, @"C:\Windows\System32\services.exe", session: 0);
+        Process(700, @"C:\Windows\System32\svchost.exe", session: 0, parent: 600);
+        Process(800, @"C:\Users\u\AppData\Local\loader.exe", window: true);
+        Process(900, @"C:\Windows\System32\svchost.exe", parent: 800);
+        Process(901, @"C:\Windows\System32\svchost.exe", parent: 4242);
+
+        var finding = Score().Single(f => f.Name == "svchost.exe");
+        var indicator = Assert.Single(finding.Indicators, i => i.Kind == IndicatorKind.UnusualParent);
+        Assert.Contains("PID 900", indicator.Evidence);
+        Assert.Contains("loader.exe", indicator.Evidence);
+        Assert.Contains("PID 901", indicator.Evidence);
+        Assert.DoesNotContain("PID 700", indicator.Evidence);
+    }
+
+    [Fact]
+    public void 親が入れ替わりうるプロセスは_起動時刻が分からなければ挙げない()
+    {
+        File(@"C:\Windows\System32\RuntimeBroker.exe", Microsoft);
+        File(@"C:\Program Files\App\app.exe", Vendor);
+        Process(10, @"C:\Program Files\App\app.exe", window: true);
+        Process(20, @"C:\Windows\System32\RuntimeBroker.exe", window: true, parent: 10);
+        Assert.All(Score(), f => Assert.Equal(0, Points(f, IndicatorKind.UnusualParent)));
+
+        _facts.Processes.Clear();
+        Process(10, @"C:\Program Files\App\app.exe", window: true, started: Now.AddMinutes(-10));
+        Process(20, @"C:\Windows\System32\RuntimeBroker.exe", window: true, parent: 10, started: Now.AddMinutes(-1));
+        Assert.Equal(30, Points(Score().Single(f => f.Name == "RuntimeBroker.exe"), IndicatorKind.UnusualParent));
     }
 
     [Fact]

@@ -22,6 +22,20 @@ public sealed class ScoringRules
     public int NoVisibleWindow { get; init; } = 10;
     public int RecentlyCreated { get; init; } = 10;
 
+    // 第 2 段階
+    public int UnusualParent { get; init; } = 30;
+    public int ModuleInSignedProcess { get; init; } = 10;
+
+    /// <summary>
+    /// DLL としてだけ出てきたファイルの「署名が無い」。実行ファイルより低く数える。
+    /// 署名済みの本体に未署名の DLL を同梱する製品は多く、同じ +30 だと 1 つの製品で数十件が「中」になる。
+    /// </summary>
+    public int SignatureNoneModule { get; init; } = 10;
+    public int ModuleAcrossPublishers { get; init; } = 15;
+
+    /// <summary>発行元の違うプログラムが、この数以上その DLL を読み込んでいたら「広く入り込んでいる」とする。</summary>
+    public int ModulePublisherThreshold { get; init; } = 3;
+
     public int RecentDays { get; init; } = 7;
 
     public int HighFrom { get; init; } = 60;
@@ -56,12 +70,14 @@ public sealed class Scorer
     private readonly ScoringRules _rules;
     private readonly string _systemRoot;
     private readonly string _systemTemp;
+    private readonly string _nativeImages;
 
     public Scorer(ScoringRules rules, string systemRoot)
     {
         _rules = rules;
         _systemRoot = systemRoot.TrimEnd('\\') + '\\';
         _systemTemp = _systemRoot + @"Temp\";
+        _nativeImages = _systemRoot + @"assembly\NativeImages_";
     }
 
     public List<Finding> Score(ScanFacts facts, Func<string, FileFacts> files, DateTime nowUtc, int scannerSession)
@@ -86,6 +102,30 @@ public sealed class Scorer
             byPid[process.Pid] = finding;
         }
 
+        var processes = new Dictionary<int, ProcessFact>();
+        foreach (var process in facts.Processes) processes[process.Pid] = process;
+
+        // 署名済みのプロセスに載っている、署名の有効でない DLL を候補にする。
+        // 本体が未署名のアプリは、DLL も未署名なのがふつうで、本体のほうがもう挙がっている
+        foreach (var (pid, modules) in facts.Modules)
+        {
+            if (!byPid.TryGetValue(pid, out var host) || host.Path is null) continue;
+            var hostSignature = files(host.Path).Signature;
+            if (!hostSignature.IsValid) continue;
+            var publisher = hostSignature.Status == SignatureStatus.ValidMicrosoft ? "Microsoft" : hostSignature.Publisher;
+
+            foreach (var module in modules)
+            {
+                if (FileKey(module) == host.Key) continue;
+                var file = files(module);
+                if (file.Signature.Status is not (SignatureStatus.None or SignatureStatus.Invalid)) continue;
+                // .NET Framework が、その PC の上で作る実行用の写し（NGEN）。署名の付けようがなく、
+                // 管理者でなければ書けない場所にある。書き換えられる状態になっていたら挙げる
+                if (!file.UserWritable && module.StartsWith(_nativeImages, StringComparison.OrdinalIgnoreCase)) continue;
+                ForFile(findings, module).LoadedBy.Add(new ModuleHost(pid, processes[pid].Name, publisher));
+            }
+        }
+
         foreach (var endpoint in facts.Endpoints)
         {
             if (!byPid.TryGetValue(endpoint.Pid, out var finding))
@@ -102,6 +142,8 @@ public sealed class Scorer
             if (finding.Path is not null) AddFileIndicators(finding, files(finding.Path), nowUtc);
             AddPersistenceIndicators(finding);
             AddProcessIndicators(finding, scannerSession);
+            AddParentIndicators(finding, processes);
+            AddModuleIndicators(finding);
             AddNetworkIndicators(finding);
 
             finding.Score = finding.Indicators.Sum(i => i.Points);
@@ -195,7 +237,12 @@ public sealed class Scorer
                 break;
             case SignatureStatus.None when !isScript:
                 // スクリプトはふつう署名を持たない。スクリプトであること自体は「スクリプト経由」で数える
-                Add(finding, IndicatorKind.SignatureNone, _rules.SignatureNone, "未署名", "署名が無い");
+                var moduleOnly = finding.LoadedBy.Count > 0 && finding.Persistence.Count == 0 && finding.Processes.Count == 0;
+                if (moduleOnly)
+                    Add(finding, IndicatorKind.SignatureNone, _rules.SignatureNoneModule, "未署名",
+                        "署名が無い（DLL としてだけ出てきたので、実行ファイルより低く数えている）");
+                else
+                    Add(finding, IndicatorKind.SignatureNone, _rules.SignatureNone, "未署名", "署名が無い");
                 break;
         }
 
@@ -268,6 +315,38 @@ public sealed class Scorer
         if (sameSession.Count > 0 && !sameSession.Any(p => p.HasVisibleWindow))
             Add(finding, IndicatorKind.NoVisibleWindow, _rules.NoVisibleWindow, "窓なし",
                 $"ウィンドウを表示しないまま動いている（PID {Summarize(sameSession.Select(p => p.Pid.ToString()))}）");
+    }
+
+    private void AddParentIndicators(Finding finding, IReadOnlyDictionary<int, ProcessFact> processes)
+    {
+        var anomalies = finding.Processes
+            .Select(p => ParentRules.Check(p, processes))
+            .Where(a => a is not null)
+            .Select(a => a!)
+            .ToList();
+        if (anomalies.Count > 0)
+            Add(finding, IndicatorKind.UnusualParent, _rules.UnusualParent, "親子異常",
+                "親子関係が不自然: " + Summarize(anomalies));
+    }
+
+    private void AddModuleIndicators(Finding finding)
+    {
+        if (finding.LoadedBy.Count == 0) return;
+
+        var hosts = finding.LoadedBy
+            .GroupBy(h => h.ProcessName, StringComparer.OrdinalIgnoreCase)
+            .Select(g => $"{g.Key}（PID {Summarize(g.Select(h => h.Pid.ToString()), 2)}）");
+        Add(finding, IndicatorKind.ModuleInSignedProcess, _rules.ModuleInSignedProcess, "読込",
+            "署名済みのプロセスに読み込まれている: " + Summarize(hosts));
+
+        var publishers = finding.LoadedBy
+            .Select(h => h.Publisher ?? "（発行元不明）")
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (publishers.Count >= _rules.ModulePublisherThreshold)
+            Add(finding, IndicatorKind.ModuleAcrossPublishers, _rules.ModuleAcrossPublishers, "広く読込",
+                $"発行元の違う {publishers.Count} 社のプログラムに読み込まれている（{Summarize(publishers)}）。"
+                + "キーボード フックのように、ほかのプロセスへ入り込む DLL はこの形になる");
     }
 
     private void AddNetworkIndicators(Finding finding)

@@ -109,7 +109,11 @@ public sealed record ProcessFact(
     string? Path,
     string? CommandLine,
     bool HasVisibleWindow,
-    int SessionId);
+    int SessionId,
+    DateTime? StartedUtc = null);
+
+/// <summary>ある DLL を読み込んでいるプロセス。</summary>
+public sealed record ModuleHost(int Pid, string ProcessName, string? Publisher);
 
 public sealed record EndpointFact(
     string Protocol,
@@ -140,5 +144,9 @@ public sealed class ScanFacts
     public List<PersistenceEntry> Persistence { get; } = new();
     public List<ProcessFact> Processes { get; } = new();
     public List<EndpointFact> Endpoints { get; } = new();
+
+    /// <summary>プロセス ID → そのプロセスに実行イメージとして載っているファイル（EXE 自身も含む）。</summary>
+    public Dictionary<int, List<string>> Modules { get; } = new();
+
     public List<ScanNote> Notes { get; } = new();
 }

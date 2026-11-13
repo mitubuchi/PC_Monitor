@@ -17,6 +17,7 @@ public enum FindingSources
     Persistence = 1,
     Process = 2,
     Network = 4,
+    Module = 8,
 }
 
 public enum IndicatorKind
@@ -33,6 +34,11 @@ public enum IndicatorKind
     OutboundConnection,
     NoVisibleWindow,
     RecentlyCreated,
+
+    // 第 2 段階
+    UnusualParent,
+    ModuleInSignedProcess,
+    ModuleAcrossPublishers,
 
     // ここから下は点を付けない「情報」
     MissingFile,
@@ -66,6 +72,9 @@ public sealed class Finding
     public List<ProcessFact> Processes { get; } = new();
     public List<EndpointFact> Endpoints { get; } = new();
 
+    /// <summary>この DLL を読み込んでいる、署名済みのプロセス。</summary>
+    public List<ModuleHost> LoadedBy { get; } = new();
+
     /// <summary>許可リストに、同じパスと同じハッシュで登録されている。</summary>
     public bool IsAllowed { get; set; }
 
@@ -76,7 +85,8 @@ public sealed class Finding
     public FindingSources Sources =>
         (Persistence.Count > 0 ? FindingSources.Persistence : FindingSources.None)
         | (Processes.Count > 0 ? FindingSources.Process : FindingSources.None)
-        | (Endpoints.Count > 0 ? FindingSources.Network : FindingSources.None);
+        | (Endpoints.Count > 0 ? FindingSources.Network : FindingSources.None)
+        | (LoadedBy.Count > 0 ? FindingSources.Module : FindingSources.None);
 
     [JsonIgnore]
     public string LevelDisplay => Level switch

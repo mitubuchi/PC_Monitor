@@ -33,6 +33,11 @@ public sealed class FindingRow : ReactiveObject
             .Select(e => $"{e.Display}（PID {e.Pid}）")
             .Distinct()
             .ToList();
+
+        LoadedBy = finding.LoadedBy
+            .GroupBy(h => (h.ProcessName, h.Publisher))
+            .Select(g => $"{g.Key.ProcessName}（{g.Key.Publisher ?? "発行元不明"}）　PID {string.Join("、", g.Select(h => h.Pid))}")
+            .ToList();
     }
 
     public Finding Finding { get; }
@@ -68,7 +73,9 @@ public sealed class FindingRow : ReactiveObject
     public IReadOnlyList<string> Registrations { get; }
     public IReadOnlyList<string> Processes { get; }
     public IReadOnlyList<string> Endpoints { get; }
+    public IReadOnlyList<string> LoadedBy { get; }
 
+    public bool HasLoadedBy => LoadedBy.Count > 0;
     public bool HasRegistrations => Registrations.Count > 0;
     public bool HasProcesses => Processes.Count > 0;
     public bool HasEndpoints => Endpoints.Count > 0;

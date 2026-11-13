@@ -43,6 +43,12 @@ public sealed class FileInspector : IFileInspector
         _windowsTemp = EnsureTrailingSeparator(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Temp"));
     }
 
+    /// <summary>
+    /// 署名だけを確かめる。読み込まれている DLL は数千あり、その大半は署名が有効で
+    /// 候補にならない。ハッシュまで取るのは、署名が有効でなかったものだけにする。
+    /// </summary>
+    public SignatureInfo VerifySignature(string path) => _verifier.Verify(path);
+
     public FileFacts Inspect(string path)
     {
         FileInfo info;

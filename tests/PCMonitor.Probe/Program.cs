@@ -13,8 +13,15 @@ using Microsoft.Win32;
 //   --run-key     HKCU の Run キーに自分を登録する
 //   --listen      0.0.0.0 の指定ポートを待ち受ける（接続は受けても何もしない）
 //   --seconds     この秒数が過ぎたら終わる（既定 120）
+//   --spawn-shell cmd.exe を子プロセスとして起動し、終わるまで待たせておく（何も実行させない）。
+//                 この EXE を WINWORD.EXE などの名前に写して使うと、「文書を開くアプリが
+//                 シェルを起動している」形になる
 //   --ready-file  準備ができたら、このファイルを作る
 //   --stop-file   このファイルができたら終わる
+//
+// 「署名済みのプロセスに読み込まれた未署名の DLL」は、この EXE ではなく
+//   dotnet PCMonitor.Probe.dll …
+// で確かめる（署名済みの dotnet.exe が、未署名の PCMonitor.Probe.dll を読み込む）。
 
 const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
 const string RunValueName = "PCMonitorProbe";
@@ -30,11 +37,25 @@ var port = int.TryParse(Option("--listen"), out var parsedPort) ? parsedPort : 0
 var seconds = int.TryParse(Option("--seconds"), out var parsedSeconds) ? parsedSeconds : 120;
 var readyFile = Option("--ready-file");
 var stopFile = Option("--stop-file");
+var spawnShell = args.Contains("--spawn-shell");
 
 TcpListener? listener = null;
+Process? shell = null;
 var registered = false;
 try
 {
+    if (spawnShell)
+    {
+        // 入力を閉じないまま持っておくと、cmd.exe は何もせずに待ち続ける
+        shell = Process.Start(new ProcessStartInfo("cmd.exe", "/q /k")
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+        });
+    }
+
     if (registerRunKey)
     {
         using var key = Registry.CurrentUser.CreateSubKey(RunKeyPath);
@@ -59,6 +80,12 @@ try
 }
 finally
 {
+    if (shell is not null)
+    {
+        try { if (!shell.HasExited) shell.Kill(entireProcessTree: true); }
+        catch (InvalidOperationException) { }
+        shell.Dispose();
+    }
     listener?.Stop();
     if (registered)
     {

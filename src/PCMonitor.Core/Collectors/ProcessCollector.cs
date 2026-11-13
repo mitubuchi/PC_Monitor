@@ -36,7 +36,7 @@ public sealed class ProcessCollector
                 // 点検している自分自身は候補にしない
                 if (pid == Environment.ProcessId) continue;
 
-                var path = QueryImagePath(pid);
+                var (path, started) = QueryImagePath(pid);
                 if (path is null && !IsKernelPseudoProcess(entry.szExeFile)) inaccessible++;
 
                 ProcessIdToSessionId((uint)pid, out var session);
@@ -48,7 +48,8 @@ public sealed class ProcessCollector
                     path,
                     commandLine,
                     windowOwners.Contains(pid),
-                    (int)session));
+                    (int)session,
+                    started));
             }
             while (Process32NextW(snapshot, ref entry));
         }
@@ -72,15 +73,23 @@ public sealed class ProcessCollector
         return (int)session;
     }
 
-    private static string? QueryImagePath(int pid)
+    /// <summary>
+    /// 実行ファイルのパスと起動時刻。起動時刻は、親プロセスの番号が使い回されていないかを
+    /// 確かめるのに使う（親が終わったあと、同じ番号が別のプロセスに付くことがある）。
+    /// </summary>
+    private static (string? Path, DateTime? StartedUtc) QueryImagePath(int pid)
     {
         var handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, (uint)pid);
-        if (handle == IntPtr.Zero) return null;
+        if (handle == IntPtr.Zero) return (null, null);
         try
         {
             var buffer = new StringBuilder(1024);
             var size = (uint)buffer.Capacity;
-            return QueryFullProcessImageNameW(handle, 0, buffer, ref size) ? buffer.ToString(0, (int)size) : null;
+            var path = QueryFullProcessImageNameW(handle, 0, buffer, ref size) ? buffer.ToString(0, (int)size) : null;
+            DateTime? started = GetProcessTimes(handle, out var creation, out _, out _, out _) && creation > 0
+                ? DateTime.FromFileTimeUtc(creation)
+                : null;
+            return (path, started);
         }
         finally
         {
@@ -167,6 +176,10 @@ public sealed class ProcessCollector
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool QueryFullProcessImageNameW(IntPtr process, uint flags, StringBuilder name, ref uint size);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetProcessTimes(IntPtr process, out long creation, out long exit, out long kernel, out long user);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

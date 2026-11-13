@@ -35,10 +35,16 @@ public sealed class SignatureVerifier : ISignatureVerifier
             if (!File.Exists(path)) return SignatureInfo.Unknown with { Detail = "ファイルが無い" };
 
             var embedded = VerifyEmbedded(path);
-            if (embedded.Status != SignatureStatus.None) return embedded;
+            if (embedded.IsValid) return embedded;
 
-            // 埋め込み署名が無ければ、カタログ署名、次に MSIX パッケージの署名を確かめる
-            return VerifyCatalog(path) ?? _packages.TryVerify(path) ?? embedded;
+            // 埋め込み署名が有効でなければ、カタログ署名、次に MSIX パッケージの署名を確かめる。
+            // 「無い」ときだけでなく「無効」のときも確かめる。ネットワークに出ないので、
+            // 証明書のつながりを手元だけでは組めない正規のファイルがある
+            // （Windows 付属の WebView2 がそうだった）。中身が書き換えられていれば、
+            // カタログにもパッケージの記録にも合わないので、ここで有効になることはない
+            var other = VerifyCatalog(path) ?? _packages.TryVerify(path);
+            if (other is { IsValid: true }) return other;
+            return embedded.Status != SignatureStatus.None ? embedded : other ?? embedded;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
         {

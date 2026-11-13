@@ -59,7 +59,12 @@ public sealed class Scanner
         progress?.Report("通信を点検中…");
         RunCollector(facts, "通信", () => new NetworkCollector().Collect(facts, cancel));
 
-        var files = InspectFiles(facts, progress, cancel);
+        progress?.Report("読み込まれている DLL を点検中…");
+        RunCollector(facts, "読み込み DLL", () => new ModuleCollector().Collect(facts, cancel));
+
+        var inspector = new FileInspector(new CachingSignatureVerifier(new SignatureVerifier()));
+        var files = InspectFiles(facts, inspector, progress, cancel);
+        InspectModules(facts, files, inspector, progress, cancel);
 
         progress?.Report("採点中…");
         var scorer = new Scorer(_options.Rules, probe.SystemRoot);
@@ -118,7 +123,7 @@ public sealed class Scanner
     }
 
     /// <summary>出てきたファイルを 1 つずつ確かめる（ハッシュと署名）。いちばん時間がかかるので並べて走らせる。</summary>
-    private static Dictionary<string, FileFacts> InspectFiles(ScanFacts facts, IProgress<string>? progress, CancellationToken cancel)
+    private static Dictionary<string, FileFacts> InspectFiles(ScanFacts facts, FileInspector inspector, IProgress<string>? progress, CancellationToken cancel)
     {
         var paths = facts.Persistence.Select(e => e.Command.TargetPath)
             .Concat(facts.Processes.Select(p => p.Path))
@@ -128,16 +133,10 @@ public sealed class Scanner
             .Select(g => (Key: g.Key, Path: g.First()))
             .ToList();
 
-        var inspector = new FileInspector(new CachingSignatureVerifier(new SignatureVerifier()));
         var results = new ConcurrentDictionary<string, FileFacts>(StringComparer.Ordinal);
         var done = 0;
-        var options = new ParallelOptions
-        {
-            CancellationToken = cancel,
-            MaxDegreeOfParallelism = Math.Clamp(Environment.ProcessorCount / 2, 1, 6),
-        };
 
-        Parallel.ForEach(paths, options, item =>
+        Parallel.ForEach(paths, Parallelism(cancel), item =>
         {
             results[item.Key] = inspector.Inspect(item.Path);
             var count = Interlocked.Increment(ref done);
@@ -147,4 +146,40 @@ public sealed class Scanner
 
         return new Dictionary<string, FileFacts>(results, StringComparer.Ordinal);
     }
+
+    /// <summary>
+    /// 読み込まれている DLL の署名を確かめる。署名が有効でなかったものだけ、
+    /// ハッシュや書き込めるかどうかまで調べる（候補になりうるのはそれだけなので）。
+    /// </summary>
+    private static void InspectModules(ScanFacts facts, Dictionary<string, FileFacts> files, FileInspector inspector,
+        IProgress<string>? progress, CancellationToken cancel)
+    {
+        var paths = facts.Modules.Values.SelectMany(m => m)
+            .GroupBy(Scorer.FileKey, StringComparer.Ordinal)
+            .Where(g => !files.ContainsKey(g.Key))
+            .Select(g => (Key: g.Key, Path: g.First()))
+            .ToList();
+
+        var results = new ConcurrentDictionary<string, FileFacts>(StringComparer.Ordinal);
+        var done = 0;
+
+        Parallel.ForEach(paths, Parallelism(cancel), item =>
+        {
+            var signature = inspector.VerifySignature(item.Path);
+            results[item.Key] = signature.Status is SignatureStatus.None or SignatureStatus.Invalid
+                ? inspector.Inspect(item.Path)
+                : new FileFacts(item.Path, signature.Status != SignatureStatus.Unknown, null, false, null, signature, false);
+            var count = Interlocked.Increment(ref done);
+            if (count % 100 == 0 || count == paths.Count)
+                progress?.Report($"読み込まれている DLL の署名を点検中…（{count} / {paths.Count}）");
+        });
+
+        foreach (var (key, file) in results) files[key] = file;
+    }
+
+    private static ParallelOptions Parallelism(CancellationToken cancel) => new()
+    {
+        CancellationToken = cancel,
+        MaxDegreeOfParallelism = Math.Clamp(Environment.ProcessorCount / 2, 1, 6),
+    };
 }
