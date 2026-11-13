@@ -1,0 +1,307 @@
+<Window x:Class="PCMonitor.Wpf.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="{Binding Title}"
+        Width="1180" Height="780" MinWidth="820" MinHeight="520"
+        WindowStartupLocation="CenterScreen"
+        FontFamily="Yu Gothic UI, Segoe UI" FontSize="13"
+        UseLayoutRounding="True">
+
+    <Window.Resources>
+        <!-- 危険度の札。色だけに頼らず、必ず文字（高・中・低・情報）も出す -->
+        <Style x:Key="LevelBadge" TargetType="Border">
+            <Setter Property="CornerRadius" Value="3" />
+            <Setter Property="Padding" Value="8,1" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Background" Value="{StaticResource LevelInfo}" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding LevelDisplay}" Value="高">
+                    <Setter Property="Background" Value="{StaticResource LevelHigh}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding LevelDisplay}" Value="中">
+                    <Setter Property="Background" Value="{StaticResource LevelMedium}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding LevelDisplay}" Value="低">
+                    <Setter Property="Background" Value="{StaticResource LevelLow}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="FieldLabel" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource Subtle}" />
+            <Setter Property="Margin" Value="0,0,12,4" />
+            <Setter Property="VerticalAlignment" Value="Top" />
+        </Style>
+
+        <!-- 選んで写せるように、値は読み取り専用の TextBox で出す -->
+        <Style x:Key="FieldValue" TargetType="TextBox">
+            <Setter Property="IsReadOnly" Value="True" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="0,0,0,4" />
+        </Style>
+
+        <Style x:Key="SectionTitle" TargetType="TextBlock">
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Margin" Value="0,10,0,4" />
+        </Style>
+
+        <DataTemplate x:Key="DetailLine">
+            <TextBox Style="{StaticResource FieldValue}" Text="{Binding Mode=OneWay}" Margin="0,0,0,6" />
+        </DataTemplate>
+    </Window.Resources>
+
+    <DockPanel>
+
+        <!-- 操作 -->
+        <Border DockPanel.Dock="Top" Background="{StaticResource Panel}" BorderBrush="{StaticResource Line}" BorderThickness="0,0,0,1" Padding="12,10">
+            <StackPanel>
+                <DockPanel LastChildFill="False">
+                    <Button DockPanel.Dock="Left" Content="スキャン" FontWeight="SemiBold" MinWidth="96" Command="{Binding ScanCommand}" />
+                    <Button DockPanel.Dock="Left" Content="中止" Command="{Binding CancelCommand}"
+                            Visibility="{Binding IsScanning, Converter={StaticResource BoolToVisibility}}" />
+                    <Button DockPanel.Dock="Left" Content="管理者として再起動" Command="{Binding RestartAsAdminCommand}"
+                            ToolTip="ほかの利用者とシステムのプロセス、一部のタスク、WMI イベント購読は、管理者でないと見られません。" />
+
+                    <Button DockPanel.Dock="Right" Content="JSON" Margin="0" Command="{Binding ExportJsonCommand}"
+                            ToolTip="点検の結果すべてを JSON に書き出します。" />
+                    <Button DockPanel.Dock="Right" Content="CSV" Command="{Binding ExportCsvCommand}"
+                            ToolTip="いま一覧に出ている行を CSV に書き出します。" />
+                    <TextBlock DockPanel.Dock="Right" Text="書き出し" VerticalAlignment="Center" Margin="16,0,8,0" Foreground="{StaticResource Subtle}" />
+
+                    <TextBox DockPanel.Dock="Right" Width="200" VerticalContentAlignment="Center" Padding="4,0"
+                             Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                             ToolTip="名前・パス・兆候・署名者・ハッシュで絞り込みます。" />
+                    <TextBlock DockPanel.Dock="Right" Text="検索" VerticalAlignment="Center" Margin="16,0,8,0" Foreground="{StaticResource Subtle}" />
+
+                    <ComboBox DockPanel.Dock="Right" Width="96" SelectedIndex="{Binding LevelFilter}" VerticalContentAlignment="Center">
+                        <ComboBoxItem Content="すべて" />
+                        <ComboBoxItem Content="低 以上" />
+                        <ComboBoxItem Content="中 以上" />
+                        <ComboBoxItem Content="高 のみ" />
+                    </ComboBox>
+                    <TextBlock DockPanel.Dock="Right" Text="危険度" VerticalAlignment="Center" Margin="16,0,8,0" Foreground="{StaticResource Subtle}" />
+
+                    <ComboBox DockPanel.Dock="Right" Width="96" SelectedIndex="{Binding KindFilter}" VerticalContentAlignment="Center">
+                        <ComboBoxItem Content="すべて" />
+                        <ComboBoxItem Content="常駐" />
+                        <ComboBoxItem Content="プロセス" />
+                        <ComboBoxItem Content="通信" />
+                    </ComboBox>
+                    <TextBlock DockPanel.Dock="Right" Text="種別" VerticalAlignment="Center" Margin="16,0,8,0" Foreground="{StaticResource Subtle}" />
+                </DockPanel>
+
+                <DockPanel Margin="0,10,0,0" LastChildFill="True">
+                    <CheckBox DockPanel.Dock="Right" Content="許可済みも表示" IsChecked="{Binding ShowAllowed}" VerticalAlignment="Center" Margin="16,0,0,0" />
+                    <ProgressBar DockPanel.Dock="Left" Width="120" Height="6" IsIndeterminate="True" Margin="0,0,10,0" VerticalAlignment="Center"
+                                 Visibility="{Binding IsScanning, Converter={StaticResource BoolToVisibility}}" />
+                    <TextBlock Text="{Binding Progress}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                </DockPanel>
+            </StackPanel>
+        </Border>
+
+        <!-- 件数と注意書き。「何も出なかった」は「安全」を意味しない（設計書 §13） -->
+        <Border DockPanel.Dock="Bottom" Background="{StaticResource Panel}" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Padding="12,6">
+            <StackPanel>
+                <TextBlock Text="{Binding Summary}" TextTrimming="CharacterEllipsis" />
+                <Expander Margin="0,4,0,0" IsExpanded="False">
+                    <Expander.Header>
+                        <TextBlock>
+                            <Run Text="点検できなかった項目・注意（" /><Run Text="{Binding Notes.Count, Mode=OneWay}" /><Run Text=" 件）" />
+                        </TextBlock>
+                    </Expander.Header>
+                    <ItemsControl ItemsSource="{Binding Notes}" Margin="22,4,0,0" MaxHeight="110">
+                        <ItemsControl.Template>
+                            <ControlTemplate TargetType="ItemsControl">
+                                <ScrollViewer VerticalScrollBarVisibility="Auto"><ItemsPresenter /></ScrollViewer>
+                            </ControlTemplate>
+                        </ItemsControl.Template>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock TextWrapping="Wrap" Margin="0,0,0,2">
+                                    <Run Text="{Binding Area, Mode=OneWay}" FontWeight="SemiBold" /><Run Text="　" /><Run Text="{Binding Message, Mode=OneWay}" />
+                                </TextBlock>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </Expander>
+                <TextBlock Margin="0,4,0,0" Foreground="{StaticResource Subtle}" TextWrapping="Wrap"
+                           Text="ここに出るのは「確認すべき候補」で、ウィルスだという断定ではありません。また「何も出なかった」は「安全」を意味しません（カーネルに隠れたもの、点検した瞬間に動いていないものは見えません）。" />
+            </StackPanel>
+        </Border>
+
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="3*" MinHeight="120" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="2*" MinHeight="120" />
+            </Grid.RowDefinitions>
+
+            <!-- 一覧 -->
+            <DataGrid Grid.Row="0" ItemsSource="{Binding Rows}" SelectedItem="{Binding Selected}"
+                      AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" SelectionUnit="FullRow"
+                      HeadersVisibility="Column" GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#E8E8E8"
+                      BorderThickness="0" RowHeight="28" CanUserResizeRows="False"
+                      EnableRowVirtualization="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                <DataGrid.RowStyle>
+                    <Style TargetType="DataGridRow">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsAllowed}" Value="True">
+                                <Setter Property="Foreground" Value="#9E9E9E" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </DataGrid.RowStyle>
+                <DataGrid.CellStyle>
+                    <Style TargetType="DataGridCell">
+                        <Setter Property="BorderThickness" Value="0" />
+                        <Setter Property="Padding" Value="6,0" />
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="DataGridCell">
+                                    <Border Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                                        <ContentPresenter VerticalAlignment="Center" />
+                                    </Border>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </DataGrid.CellStyle>
+                <DataGrid.Columns>
+                    <DataGridTemplateColumn Header="危険度" Width="72" SortMemberPath="Score">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <Border Style="{StaticResource LevelBadge}">
+                                    <TextBlock Text="{Binding LevelDisplay}" Foreground="White" FontWeight="SemiBold" />
+                                </Border>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTextColumn Header="点" Binding="{Binding Score}" Width="48" />
+                    <DataGridTextColumn Header="前回比" Binding="{Binding NewMark}" Width="60" />
+                    <DataGridTextColumn Header="名前" Binding="{Binding Name}" Width="2*" />
+                    <DataGridTextColumn Header="署名" Binding="{Binding SignatureDisplay}" Width="2*" />
+                    <DataGridTextColumn Header="兆候" Binding="{Binding Summary}" Width="3*" />
+                </DataGrid.Columns>
+            </DataGrid>
+
+            <GridSplitter Grid.Row="1" Height="5" HorizontalAlignment="Stretch" Background="{StaticResource Line}" />
+
+            <!-- 詳細 -->
+            <Grid Grid.Row="2">
+                <TextBlock Text="一覧から項目を選ぶと、根拠をここに表示します。" Foreground="{StaticResource Subtle}"
+                           HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Selected}" Value="{x:Null}">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+
+                <DockPanel DataContext="{Binding Selected}">
+                    <DockPanel.Style>
+                        <Style TargetType="DockPanel">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding}" Value="{x:Null}">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </DockPanel.Style>
+
+                    <!-- 操作は「場所を開く」「ハッシュを写す」「許可リスト」だけ。削除や強制終了は置かない（設計書 §2） -->
+                    <Border DockPanel.Dock="Bottom" Padding="12,8" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0">
+                        <StackPanel Orientation="Horizontal"
+                                    DataContext="{Binding DataContext, RelativeSource={RelativeSource AncestorType=Window}}">
+                            <Button Content="ファイルの場所を開く" Command="{Binding OpenLocationCommand}" />
+                            <Button Content="ハッシュをコピー" Command="{Binding CopyHashCommand}"
+                                    ToolTip="SHA-256 をクリップボードに写します。VirusTotal などで調べるときは、ご自身で貼り付けてください（このツールは外へ送りません）。" />
+                            <Button Command="{Binding ToggleAllowCommand}"
+                                    ToolTip="パスとハッシュの組で許可します。中身が変わると許可は外れます。">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                        <Setter Property="Content" Value="許可リストへ追加" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Selected.IsAllowed}" Value="True">
+                                                <Setter Property="Content" Value="許可を取り消す" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                        </StackPanel>
+                    </Border>
+
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel Margin="12,10">
+                            <DockPanel Margin="0,0,0,8">
+                                <Border DockPanel.Dock="Left" Style="{StaticResource LevelBadge}" Margin="0,0,10,0">
+                                    <TextBlock Foreground="White" FontWeight="SemiBold">
+                                        <Run Text="{Binding LevelDisplay, Mode=OneWay}" /><Run Text=" " /><Run Text="{Binding Score, Mode=OneWay}" /><Run Text=" 点" />
+                                    </TextBlock>
+                                </Border>
+                                <TextBlock Text="{Binding Name}" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                            </DockPanel>
+
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
+                                </Grid.RowDefinitions>
+                                <TextBlock Grid.Row="0" Style="{StaticResource FieldLabel}" Text="パス" />
+                                <TextBox Grid.Row="0" Grid.Column="1" Style="{StaticResource FieldValue}" Text="{Binding PathDisplay, Mode=OneWay}" />
+                                <TextBlock Grid.Row="1" Style="{StaticResource FieldLabel}" Text="SHA-256" />
+                                <TextBox Grid.Row="1" Grid.Column="1" Style="{StaticResource FieldValue}" FontFamily="Consolas" Text="{Binding Sha256Display, Mode=OneWay}" />
+                                <TextBlock Grid.Row="2" Style="{StaticResource FieldLabel}" Text="署名" />
+                                <TextBox Grid.Row="2" Grid.Column="1" Style="{StaticResource FieldValue}" Text="{Binding SignerDisplay, Mode=OneWay}" />
+                                <TextBlock Grid.Row="3" Style="{StaticResource FieldLabel}" Text="作成日時" />
+                                <TextBox Grid.Row="3" Grid.Column="1" Style="{StaticResource FieldValue}" Text="{Binding CreatedDisplay, Mode=OneWay}" />
+                            </Grid>
+
+                            <TextBlock Style="{StaticResource SectionTitle}" Text="根拠" />
+                            <ItemsControl ItemsSource="{Binding Evidence}" ItemTemplate="{StaticResource DetailLine}" />
+                            <TextBlock Text="兆候は付いていません（事実として載せているだけの項目です）。" Foreground="{StaticResource Subtle}">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Evidence.Count}" Value="0">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+
+                            <StackPanel Visibility="{Binding HasRegistrations, Converter={StaticResource BoolToVisibility}}">
+                                <TextBlock Style="{StaticResource SectionTitle}" Text="常駐箇所への登録" />
+                                <ItemsControl ItemsSource="{Binding Registrations}" ItemTemplate="{StaticResource DetailLine}" />
+                            </StackPanel>
+
+                            <StackPanel Visibility="{Binding HasProcesses, Converter={StaticResource BoolToVisibility}}">
+                                <TextBlock Style="{StaticResource SectionTitle}" Text="動いているプロセス" />
+                                <ItemsControl ItemsSource="{Binding Processes}" ItemTemplate="{StaticResource DetailLine}" />
+                            </StackPanel>
+
+                            <StackPanel Visibility="{Binding HasEndpoints, Converter={StaticResource BoolToVisibility}}">
+                                <TextBlock Style="{StaticResource SectionTitle}" Text="通信" />
+                                <ItemsControl ItemsSource="{Binding Endpoints}" ItemTemplate="{StaticResource DetailLine}" />
+                            </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
+                </DockPanel>
+            </Grid>
+        </Grid>
+    </DockPanel>
+</Window>
