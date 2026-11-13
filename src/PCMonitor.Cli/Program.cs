@@ -144,6 +144,19 @@ foreach (var finding in result.Findings)
         Console.WriteLine($"      ・{(indicator.Points > 0 ? $"+{indicator.Points} " : "")}{indicator.Evidence}");
 }
 
+if (keyApi is not null)
+{
+    // 見張っている間に拾った呼び出しを、候補になったかどうかにかかわらず、すべて並べる
+    Console.WriteLine();
+    Console.WriteLine($"--- 見張っている間に拾った、キー入力に関わる API の呼び出し（{keyApi.Calls.Count} 件）");
+    foreach (var group in keyApi.Calls.GroupBy(c => (c.Path, c.Pid, c.Weight, c.Description)))
+    {
+        var first = group.Min(c => c.TimeUtc).ToLocalTime();
+        Console.WriteLine($"  {first:HH:mm:ss.fff}  x{group.Count()}  [{group.Key.Weight}]  PID {group.Key.Pid}  {group.Key.Path ?? "（実行ファイル不明）"}");
+        Console.WriteLine($"      {group.Key.Description}");
+    }
+}
+
 Console.WriteLine();
 foreach (var note in result.Notes)
     Console.WriteLine($"※ {note.Area}: {note.Message}");

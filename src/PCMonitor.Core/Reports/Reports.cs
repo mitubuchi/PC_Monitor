@@ -60,7 +60,18 @@ public sealed class DataPaths
 }
 
 /// <summary>前回の結果。差分に要るぶんだけを持つ。</summary>
-public sealed record LastScan(DateTime ScannedUtc, List<LastScanItem> Items);
+public sealed record LastScan(DateTime ScannedUtc, List<LastScanItem> Items)
+{
+    /// <summary>管理者の権限で点検したか。見える範囲が違うので、前回と比べるときの目安になる。</summary>
+    public bool Elevated { get; init; }
+
+    /// <summary>
+    /// キー入力 API を見張っていたなら、その時間と拾った呼び出し。
+    /// 画面で試した結果を、あとから確かめられるように残す（2026-11-13、画面での確認の結果が
+    /// 保存ファイルから読み取れず、原因を追えなかった）。
+    /// </summary>
+    public Monitoring.KeyApiObservation? KeyApi { get; init; }
+}
 
 public sealed record LastScanItem(string Key, string? Sha256, int Score);
 

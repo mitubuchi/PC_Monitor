@@ -96,7 +96,7 @@ public sealed class Scanner
         {
             try
             {
-                JsonFiles.Write(_paths.LastScan, ScanDiff.Snapshot(started, findings));
+                JsonFiles.Write(_paths.LastScan, ScanDiff.Snapshot(started, findings) with { Elevated = elevated, KeyApi = keyApi });
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
