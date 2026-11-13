@@ -39,11 +39,14 @@ public enum IndicatorKind
     UnusualParent,
     ModuleInSignedProcess,
     ModuleAcrossPublishers,
+    WritableExecutableMemory,
+    ExecutableMappedData,
 
     // ここから下は点を付けない「情報」
     MissingFile,
     Unresolved,
     AllowedButChanged,
+    ExecutableMemoryNote,
 }
 
 /// <summary>兆候。点だけでなく、人が確かめられる根拠の文を必ず持つ（設計書 §7）。</summary>

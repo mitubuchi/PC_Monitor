@@ -16,6 +16,10 @@ using Microsoft.Win32;
 //   --spawn-shell cmd.exe を子プロセスとして起動し、終わるまで待たせておく（何も実行させない）。
 //                 この EXE を WINWORD.EXE などの名前に写して使うと、「文書を開くアプリが
 //                 シェルを起動している」形になる
+//   --alloc-exec  --spawn-shell で起動した子の cmd.exe の中に、書き込みも実行もできる領域を
+//                 64 KB だけ確保する。**確保するだけ**で、何も書き込まず、何も実行させない
+//                 （中身はゼロのまま。子は終了時に一緒に片付ける）。
+//                 「ファイルの裏付けが無い実行可能な領域」の検知を確かめるためのもの
 //   --ready-file  準備ができたら、このファイルを作る
 //   --stop-file   このファイルができたら終わる
 //
@@ -54,6 +58,12 @@ try
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
         });
+
+        if (shell is not null && args.Contains("--alloc-exec"))
+        {
+            // MEM_COMMIT | MEM_RESERVE、PAGE_EXECUTE_READWRITE。書き込みも、スレッドの作成もしない
+            Native.VirtualAllocEx(shell.Handle, IntPtr.Zero, 64 * 1024, 0x3000, 0x40);
+        }
     }
 
     if (registerRunKey)
@@ -92,4 +102,10 @@ finally
         using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: true);
         key?.DeleteValue(RunValueName, throwOnMissingValue: false);
     }
+}
+
+internal static class Native
+{
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    internal static extern IntPtr VirtualAllocEx(IntPtr process, IntPtr address, nuint size, uint allocationType, uint protect);
 }

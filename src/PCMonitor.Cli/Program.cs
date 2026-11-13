@@ -1,5 +1,6 @@
 using System.Text;
 using PCMonitor.Core;
+using PCMonitor.Core.Collectors;
 using PCMonitor.Core.Model;
 using PCMonitor.Core.Reports;
 using PCMonitor.Core.Signing;
@@ -32,6 +33,33 @@ if (Option("--verify") is { } verifyPath)
 {
     var signature = new SignatureVerifier().Verify(verifyPath);
     Console.WriteLine($"{signature.Display}{(signature.FromCatalog ? "［カタログ署名］" : "")} {signature.Detail}");
+    return 0;
+}
+
+if (Flag("--memory-map"))
+{
+    // 採点の調整用。実行できるのに実行イメージではない領域を、プロセスごとに並べる
+    var facts = new ScanFacts();
+    new ProcessCollector().Collect(facts, CancellationToken.None);
+    new MemoryMapCollector().Collect(facts, CancellationToken.None);
+    Console.WriteLine($"プロセス {facts.Processes.Count} 個のうち、割り当てを見られたのは {facts.Modules.Count} 個。"
+                      + $"該当する領域があるのは {facts.ExecutableRegions.Count} 個。");
+    Console.WriteLine("PID\t名前\t私有(個)\t私有(KB)\t書込可(個)\t写し(個)\t写しのファイル\tJIT の手がかり");
+    foreach (var process in facts.Processes.Where(p => facts.ExecutableRegions.ContainsKey(p.Pid)).OrderBy(p => p.Name))
+    {
+        var regions = facts.ExecutableRegions[process.Pid];
+        var privateRegions = regions.Where(r => r.Private).ToList();
+        var mapped = regions.Where(r => !r.Private).ToList();
+        var jit = JitEngines.Find(process.Path, facts.Modules.GetValueOrDefault(process.Pid) ?? new List<string>());
+        Console.WriteLine(string.Join('\t',
+            process.Pid, process.Name,
+            privateRegions.Select(r => r.AllocationBase).Distinct().Count(),
+            privateRegions.Sum(r => r.Size) / 1024,
+            privateRegions.Count(r => r.Writable),
+            mapped.Count,
+            string.Join(",", mapped.Select(r => Path.GetFileName(r.MappedFile ?? "(ページ ファイル)")).Distinct()),
+            jit ?? "—"));
+    }
     return 0;
 }
 

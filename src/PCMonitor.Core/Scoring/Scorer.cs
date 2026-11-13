@@ -32,6 +32,8 @@ public sealed class ScoringRules
     /// </summary>
     public int SignatureNoneModule { get; init; } = 10;
     public int ModuleAcrossPublishers { get; init; } = 15;
+    public int WritableExecutableMemory { get; init; } = 30;
+    public int ExecutableMappedData { get; init; } = 30;
 
     /// <summary>発行元の違うプログラムが、この数以上その DLL を読み込んでいたら「広く入り込んでいる」とする。</summary>
     public int ModulePublisherThreshold { get; init; } = 3;
@@ -144,6 +146,7 @@ public sealed class Scorer
             AddProcessIndicators(finding, scannerSession);
             AddParentIndicators(finding, processes);
             AddModuleIndicators(finding);
+            AddMemoryIndicators(finding, facts);
             AddNetworkIndicators(finding);
 
             finding.Score = finding.Indicators.Sum(i => i.Points);
@@ -348,6 +351,52 @@ public sealed class Scorer
                 $"発行元の違う {publishers.Count} 社のプログラムに読み込まれている（{Summarize(publishers)}）。"
                 + "キーボード フックのように、ほかのプロセスへ入り込む DLL はこの形になる");
     }
+
+    /// <summary>
+    /// ファイルの裏付けが無い実行可能な領域（設計書 §11.3）。JIT を持つプロセスは正規に作るので見ない。
+    /// JIT を持たないプロセスでも、書き込みのできない小さな領域（ウィンドウ処理の中継コードなど）は
+    /// 正規に作られる。点を付けるのは、書き込みも実行もできる領域と、ファイルを写しただけなのに
+    /// 実行できる領域。
+    /// </summary>
+    private void AddMemoryIndicators(Finding finding, ScanFacts facts)
+    {
+        var writable = new List<string>();
+        var mapped = new List<string>();
+        var readOnly = new List<string>();
+
+        foreach (var process in finding.Processes)
+        {
+            if (!facts.ExecutableRegions.TryGetValue(process.Pid, out var regions)) continue;
+            if (facts.JitEngines.ContainsKey(process.Pid)) continue;
+
+            var privateWritable = regions.Where(r => r.Private && r.Writable).ToList();
+            var privateReadOnly = regions.Where(r => r.Private && !r.Writable).ToList();
+            var mappedRegions = regions.Where(r => !r.Private).ToList();
+
+            if (privateWritable.Count > 0) writable.Add(DescribeRegions(process.Pid, privateWritable));
+            if (privateReadOnly.Count > 0) readOnly.Add(DescribeRegions(process.Pid, privateReadOnly));
+            if (mappedRegions.Count > 0)
+                mapped.Add(DescribeRegions(process.Pid, mappedRegions) + "、写しているのは "
+                           + Summarize(mappedRegions.Select(r => r.MappedFile ?? "ページ ファイル（名前の無い共有メモリ）").Distinct()));
+        }
+
+        if (writable.Count > 0)
+            Add(finding, IndicatorKind.WritableExecutableMemory, _rules.WritableExecutableMemory, "書込実行メモリ",
+                "ファイルの裏付けが無く、書き込みも実行もできる領域がある（実行時にコードを作る仕組みを持たないプロセス）: "
+                + Summarize(writable));
+
+        if (mapped.Count > 0)
+            Add(finding, IndicatorKind.ExecutableMappedData, _rules.ExecutableMappedData, "写しを実行",
+                "実行イメージではなく、ファイルを写しただけの領域が実行できるようになっている: " + Summarize(mapped));
+
+        if (readOnly.Count > 0)
+            Add(finding, IndicatorKind.ExecutableMemoryNote, 0, "実行領域",
+                "ファイルの裏付けが無い実行可能な領域がある（書き込みはできない）: " + Summarize(readOnly)
+                + "。ウィンドウ処理の中継コードなど、正規にも作られる");
+    }
+
+    private static string DescribeRegions(int pid, List<ExecutableRegion> regions) =>
+        $"PID {pid} に {regions.Count} 個・計 {Math.Max(1, regions.Sum(r => r.Size) / 1024)} KB（0x{regions[0].Address:X} から）";
 
     private void AddNetworkIndicators(Finding finding)
     {

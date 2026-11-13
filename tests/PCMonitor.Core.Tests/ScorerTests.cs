@@ -63,6 +63,7 @@ public class ScorerTests
             rules.HiddenOrDoubleExtension, rules.Autostart, rules.OutboundConnection,
             rules.NoVisibleWindow, rules.RecentlyCreated,
             rules.UnusualParent, rules.ModuleInSignedProcess, rules.ModuleAcrossPublishers, rules.SignatureNoneModule,
+            rules.WritableExecutableMemory, rules.ExecutableMappedData,
         };
         Assert.All(points, p => Assert.True(p < rules.HighFrom));
     }
@@ -372,6 +373,74 @@ public class ScorerTests
         Process(10, @"C:\Program Files\App\app.exe", window: true, started: Now.AddMinutes(-10));
         Process(20, @"C:\Windows\System32\RuntimeBroker.exe", window: true, parent: 10, started: Now.AddMinutes(-1));
         Assert.Equal(30, Points(Score().Single(f => f.Name == "RuntimeBroker.exe"), IndicatorKind.UnusualParent));
+    }
+
+    // ---- 第 2 段階: メモリ ----
+
+    private static ExecutableRegion Region(bool writable, bool isPrivate = true, string? file = null, long size = 65536) =>
+        new(0x1A2B0000, 0x1A2B0000, size, writable, isPrivate, file);
+
+    [Fact]
+    public void JIT_を持たないプロセスの_書き込みも実行もできる領域は挙がる()
+    {
+        File(@"C:\Windows\System32\notepad.exe", Microsoft);
+        Process(10, @"C:\Windows\System32\notepad.exe", window: true);
+        _facts.ExecutableRegions[10] = new List<ExecutableRegion> { Region(writable: true) };
+
+        var finding = Assert.Single(Score());
+        var indicator = Assert.Single(finding.Indicators);
+        Assert.Equal(IndicatorKind.WritableExecutableMemory, indicator.Kind);
+        Assert.Equal(30, indicator.Points);
+        Assert.Contains("PID 10", indicator.Evidence);
+        Assert.Contains("64 KB", indicator.Evidence);
+    }
+
+    [Fact]
+    public void JIT_を持つプロセスの領域は_兆候にしない()
+    {
+        File(@"C:\Program Files\App\app.exe", Vendor);
+        Process(10, @"C:\Program Files\App\app.exe", window: true);
+        _facts.ExecutableRegions[10] = new List<ExecutableRegion> { Region(writable: true), Region(writable: false, isPrivate: false) };
+        _facts.JitEngines[10] = ".NET";
+
+        Assert.Empty(Assert.Single(Score()).Indicators);
+    }
+
+    [Fact]
+    public void 書き込みのできない領域は_点を付けず情報にする()
+    {
+        File(@"C:\Windows\explorer.exe", Microsoft);
+        Process(10, @"C:\Windows\explorer.exe", window: true);
+        _facts.ExecutableRegions[10] = new List<ExecutableRegion> { Region(writable: false, size: 4096), Region(writable: false, size: 4096) };
+
+        var finding = Assert.Single(Score());
+        Assert.Equal(0, finding.Score);
+        Assert.Equal(IndicatorKind.ExecutableMemoryNote, Assert.Single(finding.Indicators).Kind);
+    }
+
+    [Fact]
+    public void ファイルを写しただけの領域が実行できると挙がる()
+    {
+        File(@"C:\Windows\System32\notepad.exe", Microsoft);
+        Process(10, @"C:\Windows\System32\notepad.exe", window: true);
+        _facts.ExecutableRegions[10] = new List<ExecutableRegion>
+        {
+            Region(writable: false, isPrivate: false, file: @"C:\Users\u\AppData\payload.bin"),
+        };
+
+        var indicator = Assert.Single(Assert.Single(Score()).Indicators);
+        Assert.Equal(IndicatorKind.ExecutableMappedData, indicator.Kind);
+        Assert.Equal(30, indicator.Points);
+        Assert.Contains("payload.bin", indicator.Evidence);
+    }
+
+    [Fact]
+    public void EXE_が公開しているシンボルを_ファイルから読める()
+    {
+        var kernel32 = Path.Combine(Environment.SystemDirectory, "kernel32.dll");
+        Assert.True(PCMonitor.Core.Collectors.PeExports.ContainsAny(kernel32, "CreateFileW"));
+        Assert.False(PCMonitor.Core.Collectors.PeExports.ContainsAny(kernel32, "napi_create_function"));
+        Assert.False(PCMonitor.Core.Collectors.PeExports.ContainsAny(Path.Combine(Environment.SystemDirectory, "no-such-file.dll"), "x"));
     }
 
     [Fact]

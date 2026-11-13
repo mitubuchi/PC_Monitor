@@ -59,8 +59,8 @@ public sealed class Scanner
         progress?.Report("通信を点検中…");
         RunCollector(facts, "通信", () => new NetworkCollector().Collect(facts, cancel));
 
-        progress?.Report("読み込まれている DLL を点検中…");
-        RunCollector(facts, "読み込み DLL", () => new ModuleCollector().Collect(facts, cancel));
+        progress?.Report("読み込まれている DLL とメモリの割り当てを点検中…");
+        RunCollector(facts, "読み込み DLL とメモリ", () => new MemoryMapCollector().Collect(facts, cancel));
 
         var inspector = new FileInspector(new CachingSignatureVerifier(new SignatureVerifier()));
         var files = InspectFiles(facts, inspector, progress, cancel);

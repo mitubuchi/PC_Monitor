@@ -112,6 +112,13 @@ public sealed record ProcessFact(
     int SessionId,
     DateTime? StartedUtc = null);
 
+/// <summary>
+/// 実行できるのに、実行イメージではない領域。
+/// <see cref="Private"/> が true ならファイルの裏付けが無い。false ならファイルを写しただけの領域で、
+/// <see cref="MappedFile"/> がそのファイル（ページ ファイルを写したものなら null）。
+/// </summary>
+public sealed record ExecutableRegion(long Address, long AllocationBase, long Size, bool Writable, bool Private, string? MappedFile);
+
 /// <summary>ある DLL を読み込んでいるプロセス。</summary>
 public sealed record ModuleHost(int Pid, string ProcessName, string? Publisher);
 
@@ -147,6 +154,15 @@ public sealed class ScanFacts
 
     /// <summary>プロセス ID → そのプロセスに実行イメージとして載っているファイル（EXE 自身も含む）。</summary>
     public Dictionary<int, List<string>> Modules { get; } = new();
+
+    /// <summary>プロセス ID → 実行できるのに、実行イメージではない領域。無いプロセスは載らない。</summary>
+    public Dictionary<int, List<ExecutableRegion>> ExecutableRegions { get; } = new();
+
+    /// <summary>
+    /// プロセス ID → 実行時にコードを作る仕組み（JIT）の名前。該当する領域を持つプロセスについてだけ調べる。
+    /// JIT を持つプロセスは、ファイルの裏付けが無い実行可能な領域を正規に作る。
+    /// </summary>
+    public Dictionary<int, string> JitEngines { get; } = new();
 
     public List<ScanNote> Notes { get; } = new();
 }
