@@ -452,7 +452,8 @@ pcmonitor --memory-map      プロセスごとに、該当する領域の個数�
 
 ### 11.5 ETW によるキー入力 API の監視 — 調査（2026-11-13）
 
-まだ実装していない。**定義を読むところまで**が済み、**実際に流れるかの確認**が残っている。
+まだ実装していない。定義を読み、管理者で流して、**4 つのうち 3 つが実際に流れてくること**まで確かめた。
+`GetAsyncKeyState`（1003）だけは、出る条件がまだ分かっていない。
 
 #### 確かめたこと（この PC のプロバイダーの定義から。管理者でなくても読める）
 
@@ -463,10 +464,10 @@ pcmonitor --memory-map      プロセスごとに、該当する領域の個数�
 
 | ID | 項目 | 対応する API（項目名からの推定） |
 |---|---|---|
-| 1000 | `eventMin`, `eventMax`, `idEventProcess`, `idEventThread`, `Flags`, `HookInstance` | `SetWinEventHook`（キーとは無関係。ウィンドウの出来事の通知） |
-| 1001 | `ReturnValue`, `UsagePage`, `Usage`, `Flags`, `hwndTarget`, `ThreadStartAddress`, `ThreadCreateTime`, `ThreadId`, `cWindows`, `cVisWindows`, `ThreadInfoFlags`, `ProcessId`, `ProcessCreateTime`, `ProcessStartKey`, `ThreadStartAddressMappedModuleName`, `ThreadStartAddressQueryResult`, `ThreadStartAddressVad…`（割り当ての情報 5 項目） | `RegisterRawInputDevices`。キーボードは `UsagePage`=1・`Usage`=6 |
-| 1002 | `FilterType`, `pstrLib`, `hmod`, `pfnFilterProc`, `ReturnValue` | `SetWindowsHookEx`。`FilterType` がフックの種類（`WH_KEYBOARD`=2、`WH_KEYBOARD_LL`=13）、`pstrLib` がフックの DLL |
-| 1003 | `PID`, `MsSinceLastKeyEvent`, `BackgroundCallCount` | `GetAsyncKeyState` を、前面でないプロセスが呼んだとき |
+| 1000 | `eventMin`, `eventMax`, `idEventProcess`, `idEventThread`, `Flags`, `HookInstance` | `SetWinEventHook`（キーとは無関係。ウィンドウの出来事の通知）。**確認済み** |
+| 1001 | `ReturnValue`, `UsagePage`, `Usage`, `Flags`, `hwndTarget`, `ThreadStartAddress`, `ThreadCreateTime`, `ThreadId`, `cWindows`, `cVisWindows`, `ThreadInfoFlags`, `ProcessId`, `ProcessCreateTime`, `ProcessStartKey`, `ThreadStartAddressMappedModuleName`, `ThreadStartAddressQueryResult`, `ThreadStartAddressVad…`（割り当ての情報 5 項目） | `RegisterRawInputDevices`。キーボードは `UsagePage`=1・`Usage`=6。**確認済み** |
+| 1002 | `FilterType`, `pstrLib`, `hmod`, `pfnFilterProc`, `ReturnValue` | `SetWindowsHookEx`。`FilterType` がフックの種類（`WH_KEYBOARD`=2、`WH_KEYBOARD_LL`=13）、`pstrLib` がフックの DLL。**確認済み** |
+| 1003 | `PID`, `MsSinceLastKeyEvent`, `BackgroundCallCount` | `GetAsyncKeyState` を、前面でないプロセスが呼んだとき。**未確認**（流れてこなかった） |
 
 - 項目名に Hook・RawInput・Key を含むイベントは、ほかには ID 4（UIPI。フックが権限の壁で止められた記録）だけだった
 - 1001 には、登録したスレッドの開始番地と、その番地がどのモジュールに属すか
@@ -474,16 +475,42 @@ pcmonitor --memory-map      プロセスごとに、該当する領域の個数�
   キーボードの生入力を登録した**、という形を 1 つのイベントで見分けられる見込み
 - 1002 は呼び出したプロセスが項目に無い。イベントのヘッダーのプロセス ID を使うことになる
 
-#### まだ確かめていないこと（管理者で流して確かめる）
+#### 管理者で流して確かめたこと（2026-11-13、`tools/etw-probe.ps1`、8 秒）
 
-1. 4 つのイベントが、キーワード `0x400` を有効にしたセッションに**実際に流れてくるか**
-   （保護されたプロセスにしか渡されない種類のイベントかもしれない）
-2. 上の表の「対応する API」が合っているか
-3. ヘッダーのプロセス ID が、API を呼んだプロセスを指すか
-4. 1003 が出る条件（1 回の呼び出しごとか、回数や間隔がしきい値を超えたときだけか）
-5. ふだんの状態で、どのくらいの量が流れるか（正規のソフトがどれだけ呼んでいるか）
+Probe の `--key-apis` が呼んだ API が、呼んだ順にそのまま流れてきた。
 
-確かめるためのスクリプトを `tools/etw-probe.ps1` に置いた。**管理者のターミナルで**実行する
+| ID | 流れてきた値 | 分かったこと |
+|---|---|---|
+| 1002 | `FilterType`=13、`pstrLib`=NULL、`hmod`=0x0、`pfnFilterProc`=関数の番地、`ReturnValue`=フックのハンドル | `SetWindowsHookEx` で合っている。`WH_KEYBOARD_LL` は 13。EXE の中の関数を渡した低レベル フックでは、DLL の名前もモジュールも空になる |
+| 1001 | 1 件目 `Flags`=0、2 件目 `Flags`=1。どちらも `UsagePage`=1、`Usage`=6、`ReturnValue`=1 | `RegisterRawInputDevices` で合っている。登録と取り消し（`RIDEV_REMOVE`=1）が 1 件ずつ出る |
+| 1000 | `eventMin`=3、`eventMax`=3 | `SetWinEventHook` で合っている（3 は前面のウィンドウが変わった通知） |
+| 1003 | **0 件** | F24 を 20 ミリ秒おきに 8 秒間問い合わせたが、出なかった |
+
+- **保護されたプロセスでなくても受け取れる。** 管理者が `logman` で始めたふつうのセッションに流れてきた
+- **ヘッダーのプロセス ID とスレッド ID は、API を呼んだ側を指す**（4 件とも Probe のもの）。
+  1002 は項目に呼び出し元が無いが、ヘッダーで足りる
+- 1001 の `ThreadStartAddressMappedModuleName` は `\Device\HarddiskVolume3\…\PCMonitor.Probe.exe` の形で入る。
+  §11.2 と同じ変換でドライブ文字に直せる。`ThreadStartAddressVadRegionType` は 0x1000000（実行イメージ）だった。
+  ここが実行イメージでなければ、ファイルの裏付けが無い場所から始まったスレッドということになる
+- 8 秒の間、**ほかのプロセスからは 1 件も出なかった**。ふだんの量は多くなさそうだが、8 秒では決められない
+
+実行したとき、記録（`.etl`）はできたのに、まとめのテキストが書かれなかった。同じ `.etl` を通常の権限で読み直すと
+まとめは正しく作れたので、止まった理由は分かっていない。次からは画面の出力を `artifacts\etw\run.log` に残す。
+
+#### まだ確かめていないこと
+
+1. **1003 が出る条件。** 問い合わせるキーが実際に押されている必要があるのか、回数や間隔のしきい値があるのか。
+   Probe で確かめようとすると「押されたキーを問い合わせる」ことになり、§12 の決まり（キー入力の取得は行わない）に触れる。
+   長めに記録して、ふだん使っているソフトから出るかどうかを見るほうがよい
+2. **ふだんの状態で、どのくらいの量が流れるか。** 正規のソフトがどれだけ呼んでいるかで、兆候の付け方が変わる
+
+どちらも、ふだんどおり PC を使いながら長めに記録すれば分かる。
+
+```
+pwsh -File tools\etw-probe.ps1 -Seconds 120
+```
+
+スクリプトは `tools/etw-probe.ps1` にある。**管理者のターミナルで**実行する
 （ETW のセッションを始められるのは管理者だけで、Claude Code からは昇格できない）。
 
 ```

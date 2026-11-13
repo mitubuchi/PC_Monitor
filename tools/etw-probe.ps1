@@ -41,6 +41,11 @@ if (-not (Test-Path $probe)) {
 New-Item -ItemType Directory -Force $outDir | Out-Null
 Remove-Item $etl, $report -ErrorAction SilentlyContinue
 
+# 画面に出たものを残す。途中で止まったとき、どこまで進んだかをあとから読めるように
+# （2026-11-13 の 1 回目は、記録はできたのにまとめが書かれず、理由が分からなかった）
+Start-Transcript -Path (Join-Path $outDir 'run.log') -Force | Out-Null
+trap { Write-Host "止まりました: $($_.Exception.Message)（$($_.InvocationInfo.ScriptLineNumber) 行目）"; Stop-Transcript | Out-Null; break }
+
 # 前回の実行が途中で止まっていたら、残ったセッションを片付ける
 & logman stop $session -ets 2>$null | Out-Null
 
@@ -106,3 +111,4 @@ foreach ($id in 1000, 1001, 1002, 1003) {
 Write-Host ''
 Write-Host "まとめを書きました: $report"
 Get-Content $report -Encoding UTF8 | Select-Object -First 12
+Stop-Transcript | Out-Null
