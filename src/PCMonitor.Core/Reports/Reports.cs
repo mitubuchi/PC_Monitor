@@ -73,7 +73,11 @@ public sealed record LastScan(DateTime ScannedUtc, List<LastScanItem> Items)
     public Monitoring.KeyApiObservation? KeyApi { get; init; }
 }
 
-public sealed record LastScanItem(string Key, string? Sha256, int Score);
+/// <param name="Indicators">
+/// 付いていた兆候の名前。点だけ残しても、あとから「なぜ上がったのか」を追えない
+/// （2026-11-13、explorer.exe が 30 点に上がった理由を、保存ファイルから読み取れなかった）。
+/// </param>
+public sealed record LastScanItem(string Key, string? Sha256, int Score, string? Indicators = null);
 
 public static class ScanDiff
 {
@@ -88,7 +92,8 @@ public static class ScanDiff
     }
 
     public static LastScan Snapshot(DateTime scannedUtc, IEnumerable<Finding> findings) =>
-        new(scannedUtc, findings.Select(f => new LastScanItem(f.Key, f.Sha256, f.Score)).ToList());
+        new(scannedUtc, findings.Select(f => new LastScanItem(
+            f.Key, f.Sha256, f.Score, f.Indicators.Count == 0 ? null : f.IndicatorSummary)).ToList());
 }
 
 /// <summary>結果の書き出し（CSV と JSON）。</summary>
