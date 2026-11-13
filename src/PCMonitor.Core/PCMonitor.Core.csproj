@@ -1,13 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net9.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <RootNamespace>PCMonitor.Core</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
     <!-- WMI（Win32_Process のコマンドライン、root\subscription のイベント購読）に使う -->
-    <PackageReference Include="System.Management" Version="9.0.0" />
+    <PackageReference Include="System.Management" Version="10.0.15" />
     <!-- ETW のセッションと、イベントの読み取りに使う（設計書 §11.5）。Microsoft 製、MIT（nuspec で確認） -->
     <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="4.0.0" />
   </ItemGroup>

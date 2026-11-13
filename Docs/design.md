@@ -82,9 +82,11 @@ PCMonitor/
 
 | プロジェクト | TargetFramework | 備考 |
 |---|---|---|
-| `PCMonitor.Core` | `net9.0-windows` | Win32 API を P/Invoke で呼ぶ。Nullable `enable` |
-| `PCMonitor.Cli` | `net9.0-windows` | 検知の実測に使う。定期実行を足すときの入口にもなる |
-| `PCMonitor.Wpf` | `net9.0-windows10.0.19041.0` | ReactiveUI は **23.2.28 に固定**（ReactiveUI.WPF がこの TargetFramework 向け）。`StartupUri` は使わず `App.xaml.cs` で手動初期化 |
+| `PCMonitor.Core` | `net10.0-windows` | Win32 API を P/Invoke で呼ぶ。Nullable `enable` |
+| `PCMonitor.Cli` | `net10.0-windows` | 検知の実測に使う。定期実行を足すときの入口にもなる |
+| `PCMonitor.Wpf` | `net10.0-windows10.0.19041.0` | ReactiveUI は **23.2.28 に固定**（ReactiveUI.WPF がこの TargetFramework 向けのものを含む）。`StartupUri` は使わず `App.xaml.cs` で手動初期化 |
+
+2026-11-13 に .NET 9 から .NET 10 に移した（§15）。SDK は `global.json` で 10.0.100 以降を指定している。
 
 点検ロジックを `Core` に分けるのは、コンソール版や定期実行（タスクスケジューラから
 起動して差分だけ通知する）を足せるようにするため。コンソール版は、画面を作る前に
@@ -717,8 +719,8 @@ pcmonitor-cli --no-save --find PCMonitor.Probe
 - 既知マルウェアのハッシュ一覧や YARA ルールとの照合を足すか
   （足すなら、一覧の入手元と更新のしかたを決める）
 - インストーラーを作るか。いまは ZIP の配布に留めている（§15）
-- **.NET 10 に移すか**（§15）
 - コード署名をするか。しないと、受け取った PC で SmartScreen が止める（§15）
+- 同梱した実行環境の更新をどう知らせるか。いまは ZIP を作り直すしかない（§15）
 
 ## 15. ほかの PC で使う（2026-11-13、0.2.0）
 
@@ -729,7 +731,7 @@ pcmonitor-cli --no-save --find PCMonitor.Probe
 
 | 入れるもの | 入れないもの |
 |---|---|
-| `PCMonitor.exe`（画面）、`pcmonitor-cli.exe`（コンソール版）、.NET 9 の実行環境、使う人向けの `README.txt` | 検証プログラム（Probe）、`tools/` のスクリプト、デバッグ用のシンボル、TraceEvent のほかの CPU 向けの補助 DLL |
+| `PCMonitor.exe`（画面）、`pcmonitor-cli.exe`（コンソール版）、.NET 10 の実行環境、使う人向けの `README.txt` | 検証プログラム（Probe）、`tools/` のスクリプト、デバッグ用のシンボル、TraceEvent のほかの CPU 向けの補助 DLL |
 
 - **Probe を入れないのは**、キーロガーが使う API を（何も取得しない形でも）呼ぶので、受け取った PC のウイルス対策ソフトに
   止められうるうえ、使う人には要らないため
@@ -760,11 +762,27 @@ pcmonitor-cli --no-save --find PCMonitor.Probe
   画面の `coreclr.dll`・`PresentationFramework.dll` は、展開したフォルダーから読み込まれていた
 - **別の PC では、まだ一度も動かしていない。** ほかの Windows の版、ARM64、会社の PC の制限は、確かめていない
 
-### .NET 9 のサポートは終わっている
+### .NET 10 に移した
 
 **.NET 9 のサポートは 2026-11-10 に終わった**（Microsoft の .NET サポート ポリシーのページで確認）。
-自己完結型で配ると、ZIP に入れた実行環境（9.0.17）には、これからセキュリティ更新が入らない。
-点検ツールとしては望ましくない。
+自己完結型で配ると、ZIP に入れた実行環境にセキュリティ更新が入らなくなるので、
+配る前に .NET 10（LTS、2028-11-14 まで）に移した。
 
-.NET 10（LTS、2028-11-14 まで）に移せば解消する。この PC には .NET 10 の SDK が入っていないので、入れるところから要る。
-画面は ReactiveUI 23.2.28 に固定しているので、移すときは .NET 10 で動くかを確かめる（`~/ClaudeDev/rules/dotnet.md`）。
+- SDK は 10.0.404、同梱する実行環境は 10.0.15（2026-11-10 のセキュリティ修正入り）。
+  Microsoft のリリース情報（`release-metadata/10.0/releases.json`）から版・ダウンロード先・SHA-512 を取り、照合してから入れた
+- ReactiveUI 23.2.28 は `net10.0-windows10.0.19041` 向けのものを最初から含んでいたので、版は変えていない
+- System.Management は 9.0.0 から 10.0.15 に揃えた
+- `global.json` で SDK 10.0.100 以降を指定した。.NET 9 の SDK でビルドしようとすると、分かりやすく止まる
+- 移したあと、単体テスト（80 件）、Probe での検知（Run キー＋待ち受け、書き込みも実行もできる領域、
+  記録済みの `.etl` のキー入力 API）、画面の起動、ZIP を展開しての動作を、.NET 9 のときと同じ結果になることで確かめた
+
+**同梱する実行環境は、ZIP を作ったときの SDK の版になる。** .NET 10 にセキュリティ修正が出たら、
+SDK を新しくしてから `tools/publish.ps1` で作り直す。`publish.ps1` は最後に、同梱した実行環境の版を表示する。
+
+**開発する PC に .NET 10 の SDK が要る。** 管理者権限なしで入れるなら、Microsoft の ZIP を
+`%LOCALAPPDATA%\Programs\dotnet10` に展開する（この PC はそうした）。その場合、
+
+- ビルドは `%LOCALAPPDATA%\Programs\dotnet10\dotnet.exe build PCMonitor.sln` のように、その `dotnet.exe` で行う
+- 開発用のビルド（`bin\Debug\…`）は .NET 10 の実行環境を探して起動するので、`DOTNET_ROOT` をその場所に向ける。
+  向けないと「.NET をインストールしてください」と出て起動しない
+- `tools/publish.ps1`・`monitor-probe.ps1`・`etw-probe.ps1` は、この置き場所を自分で探す

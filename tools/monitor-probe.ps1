@@ -27,6 +27,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# 開発用のビルドは、.NET 10 の実行環境を探して起動する。PC 全体に入っていなければ、
+# ユーザーのフォルダーに入れた SDK の実行環境を使う（管理者の権限で動かしても、同じ利用者なら同じ場所）
+$userDotnet = Join-Path $env:LOCALAPPDATA 'Programs\dotnet10'
+if (-not $env:DOTNET_ROOT -and (Test-Path (Join-Path $userDotnet 'dotnet.exe'))) { $env:DOTNET_ROOT = $userDotnet }
 
 $root = Split-Path $PSScriptRoot -Parent
 $outDir = Join-Path $root 'artifacts\etw'
@@ -34,8 +38,8 @@ $name = if ($Ambient) { 'monitor-ambient' } else { 'monitor-run' }
 $report = Join-Path $outDir "$name.txt"
 $errors = Join-Path $outDir "$name-errors.txt"
 $dataDir = Join-Path $outDir 'data'
-$cli = Join-Path $root 'src\PCMonitor.Cli\bin\Debug\net9.0-windows\pcmonitor-cli.exe'
-$probe = Join-Path $root 'tests\PCMonitor.Probe\bin\Debug\net9.0-windows\PCMonitor.Probe.exe'
+$cli = Join-Path $root 'src\PCMonitor.Cli\bin\Debug\net10.0-windows\pcmonitor-cli.exe'
+$probe = Join-Path $root 'tests\PCMonitor.Probe\bin\Debug\net10.0-windows\PCMonitor.Probe.exe'
 
 foreach ($file in $cli, $probe) {
     if (-not (Test-Path $file)) { throw "見つかりません。先に dotnet build PCMonitor.sln を実行してください: $file" }

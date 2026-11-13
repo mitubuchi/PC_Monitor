@@ -3,8 +3,11 @@
     ほかの Windows PC に渡すための ZIP を作る。
 
 .DESCRIPTION
-    画面（PCMonitor.exe）とコンソール版（pcmonitor-cli.exe）を、.NET の実行環境ごと
+    画面（PCMonitor.exe）とコンソール版（pcmonitor-cli.exe）を、.NET 10 の実行環境ごと
     1 つのフォルダーにまとめて（自己完結型）、ZIP にする。受け取った PC に .NET は要らない。
+
+    同梱する実行環境は、ZIP を作ったときの SDK に入っている版になる。セキュリティ修正が出たら、
+    SDK を新しくしてから作り直すこと。
 
     同梱しないもの:
       - PCMonitor.Probe（検知を確かめるための検証プログラム）。キーロガーが使う API を呼ぶので、
@@ -30,6 +33,21 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# .NET 10 の SDK を探す。PATH の dotnet に無ければ、ユーザーのフォルダーに入れたものを使う
+# （管理者権限なしで入れるときの置き場所。~/ClaudeDev/rules/windows.md「winget install は…終わらない」）
+function Find-Dotnet10 {
+    $candidates = @()
+    $command = Get-Command dotnet -ErrorAction SilentlyContinue
+    if ($command) { $candidates += $command.Source }
+    $candidates += (Join-Path $env:LOCALAPPDATA 'Programs\dotnet10\dotnet.exe')
+    foreach ($candidate in $candidates) {
+        if (-not (Test-Path $candidate)) { continue }
+        if (@(& $candidate --list-sdks 2>$null) -match '^10\.') { return $candidate }
+    }
+    throw '.NET 10 の SDK が見つかりません。https://dotnet.microsoft.com/download/dotnet/10.0 から入れてください'
+}
+$dotnet = Find-Dotnet10
+
 $root = Split-Path $PSScriptRoot -Parent
 [xml]$props = Get-Content (Join-Path $root 'Directory.Build.props') -Raw
 $version = @($props.Project.PropertyGroup.Version | Where-Object { $_ })[0]
@@ -52,7 +70,7 @@ $projects = @(
 )
 foreach ($project in $projects) {
     Write-Host "発行しています: $project"
-    & dotnet publish (Join-Path $root $project) `
+    & $dotnet publish (Join-Path $root $project) `
         -c Release -r $Runtime --self-contained true -o $out `
         -p:DebugType=none -p:DebugSymbols=false --nologo -v q
     if ($LASTEXITCODE -ne 0) { throw "dotnet publish が失敗しました（$project、終了コード $LASTEXITCODE）" }
@@ -85,3 +103,5 @@ Write-Host ''
 Write-Host "作りました: $zip"
 Write-Host "  ZIP $zipMB MB / 展開すると $folderMB MB（$($files.Count) ファイル）"
 Write-Host "  SHA-256 $hash"
+$included = (Get-Content (Join-Path $out 'PCMonitor.runtimeconfig.json') -Raw | ConvertFrom-Json).runtimeOptions.includedFrameworks
+Write-Host ("  同梱した実行環境: " + (($included | ForEach-Object { "$($_.name) $($_.version)" }) -join ', '))

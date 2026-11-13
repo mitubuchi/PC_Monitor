@@ -23,12 +23,16 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# 開発用のビルドは、.NET 10 の実行環境を探して起動する。PC 全体に入っていなければ、
+# ユーザーのフォルダーに入れた SDK の実行環境を使う（管理者の権限で動かしても、同じ利用者なら同じ場所）
+$userDotnet = Join-Path $env:LOCALAPPDATA 'Programs\dotnet10'
+if (-not $env:DOTNET_ROOT -and (Test-Path (Join-Path $userDotnet 'dotnet.exe'))) { $env:DOTNET_ROOT = $userDotnet }
 
 $root = Split-Path $PSScriptRoot -Parent
 $outDir = Join-Path $root 'artifacts\etw'
 $etl = Join-Path $outDir 'win32k-audit.etl'
 $report = Join-Path $outDir 'win32k-audit.txt'
-$probe = Join-Path $root 'tests\PCMonitor.Probe\bin\Debug\net9.0-windows\PCMonitor.Probe.exe'
+$probe = Join-Path $root 'tests\PCMonitor.Probe\bin\Debug\net10.0-windows\PCMonitor.Probe.exe'
 $session = 'PCMonitorEtwProbe'
 $provider = '{8c416c79-d49b-4f01-a467-e56d3aa8234c}'   # Microsoft-Windows-Win32k
 $keywords = '0x400'                                      # AuditApiCalls

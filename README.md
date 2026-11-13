@@ -44,7 +44,8 @@ PCMonitor は「常駐している・通信している・署名が無い」と�
 pwsh -File tools\publish.ps1
 ```
 
-`artifacts\publish\PCMonitor-<版>-win-x64.zip` ができる（約 75 MB、展開すると約 185 MB）。
+`artifacts\publish\PCMonitor-<版>-win-x64.zip` ができる（約 77 MB、展開すると約 190 MB）。
+.NET 10 の実行環境を同梱する。同梱する版は ZIP を作ったときの SDK の版なので、.NET にセキュリティ修正が出たら作り直す。
 中身は画面（`PCMonitor.exe`）、コンソール版（`pcmonitor-cli.exe`）、使う人向けの説明書（`README.txt`）。
 検証プログラム（Probe）は入れていない。説明書の元は [dist/README.txt](dist/README.txt)。
 
@@ -71,7 +72,11 @@ ZIP の中の `README.txt` に書いてある。
 ## 必要なもの（開発）
 
 - Windows 10 / 11（64 ビット）。動かして確かめたのは Windows 11 25H2 だけ
-- [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0)
+- [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)（10.0.100 以降。`global.json` で指定している）
+
+管理者権限なしで SDK を入れるときは、Microsoft の ZIP を `%LOCALAPPDATA%\Programs\dotnet10` に展開する。
+その場合、ビルドはその `dotnet.exe` で行い、開発用のビルドを起動するときは `DOTNET_ROOT` をその場所に向ける
+（[Docs/design.md](Docs/design.md) §15）。`tools\` のスクリプトは、この置き場所を自分で探す。
 
 ## ビルドと起動
 
@@ -82,7 +87,7 @@ dotnet build PCMonitor.sln
 画面:
 
 ```
-src\PCMonitor.Wpf\bin\Debug\net9.0-windows10.0.19041.0\PCMonitor.exe
+src\PCMonitor.Wpf\bin\Debug\net10.0-windows10.0.19041.0\PCMonitor.exe
 ```
 
 通常の権限で起動でき、見られる範囲だけ点検する。ほかの利用者とシステムのプロセス、一部のタスク、
@@ -91,7 +96,7 @@ WMI イベント購読は、管理者でないと見られない。画面の「�
 コンソール版:
 
 ```
-src\PCMonitor.Cli\bin\Debug\net9.0-windows\pcmonitor-cli.exe --min-level medium --verbose
+src\PCMonitor.Cli\bin\Debug\net10.0-windows\pcmonitor-cli.exe --min-level medium --verbose
 ```
 
 | オプション | 内容 |
@@ -180,8 +185,8 @@ Probe は、キーロガーやバックドアが取る形を**害の無い形で
 通常の権限で確かめる例:
 
 ```
-tests\PCMonitor.Probe\bin\Debug\net9.0-windows\PCMonitor.Probe.exe --run-key --listen 47631 --seconds 60
-src\PCMonitor.Cli\bin\Debug\net9.0-windows\pcmonitor-cli.exe --no-save --find PCMonitor.Probe
+tests\PCMonitor.Probe\bin\Debug\net10.0-windows\PCMonitor.Probe.exe --run-key --listen 47631 --seconds 60
+src\PCMonitor.Cli\bin\Debug\net10.0-windows\pcmonitor-cli.exe --no-save --find PCMonitor.Probe
 ```
 
 キー入力 API の監視は、管理者のターミナルで確かめる。見張り・Probe の実行・点検をまとめて行う。
@@ -223,6 +228,6 @@ Windows PowerShell 5.1 は、既定ではスクリプトを実行しない。`pw
 |---|---|---|
 | [ReactiveUI.WPF](https://github.com/reactiveui/ReactiveUI) 23.2.28 | 画面 | MIT |
 | [Microsoft.Diagnostics.Tracing.TraceEvent](https://github.com/microsoft/perfview) 4.0.0 | キー入力 API の監視（ETW） | MIT |
-| [System.Management](https://www.nuget.org/packages/System.Management) 9.0.0 | WMI | MIT |
+| [System.Management](https://www.nuget.org/packages/System.Management) 10.0.15 | WMI | MIT |
 
 ReactiveUI は 23.2.28 に固定している（24.1.0 は System.Reactive への依存をやめている）。
