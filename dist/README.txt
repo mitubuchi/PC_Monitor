@@ -125,6 +125,13 @@ PCMonitor {{VERSION}}
 人に見せるときは、ファイルのパスやプロセスの名前に、個人の名前やフォルダーの名前が含まれることに気をつけてください。
 
 
+■ ライセンス
+
+PCMonitor は MIT ライセンスで公開しています（LICENSE.txt）。
+同梱している .NET の実行環境やライブラリのライセンスと著作権の表示は、THIRD-PARTY-NOTICES.txt にあります。
+ソースコード: https://github.com/mitubuchi/PC_Monitor
+
+
 ■ コンソール版
 
 同じフォルダーの pcmonitor-cli.exe は、画面の無い版です。コマンド プロンプトや PowerShell から使います。

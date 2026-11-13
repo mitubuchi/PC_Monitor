@@ -46,7 +46,8 @@ pwsh -File tools\publish.ps1
 
 `artifacts\publish\PCMonitor-<版>-win-x64.zip` ができる（約 77 MB、展開すると約 190 MB）。
 .NET 10 の実行環境を同梱する。同梱する版は ZIP を作ったときの SDK の版なので、.NET にセキュリティ修正が出たら作り直す。
-中身は画面（`PCMonitor.exe`）、コンソール版（`pcmonitor-cli.exe`）、使う人向けの説明書（`README.txt`）。
+中身は画面（`PCMonitor.exe`）、コンソール版（`pcmonitor-cli.exe`）、使う人向けの説明書（`README.txt`）、
+ライセンスの表示（`LICENSE.txt`、`THIRD-PARTY-NOTICES.txt`）。
 検証プログラム（Probe）は入れていない。説明書の元は [dist/README.txt](dist/README.txt)。
 
 | 条件 | 動くか |
@@ -231,3 +232,9 @@ Windows PowerShell 5.1 は、既定ではスクリプトを実行しない。`pw
 | [System.Management](https://www.nuget.org/packages/System.Management) 10.0.15 | WMI | MIT |
 
 ReactiveUI は 23.2.28 に固定している（24.1.0 は System.Reactive への依存をやめている）。
+配布する ZIP には、これらと、その依存（DynamicData・Splat・System.Reactive など、すべて MIT）、
+.NET の実行環境のライセンス表示を `THIRD-PARTY-NOTICES.txt` として入れる。`tools/publish.ps1` が、実際に同梱したパッケージから作る。
+
+## ライセンス
+
+[MIT](LICENSE)

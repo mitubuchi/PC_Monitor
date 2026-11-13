@@ -87,6 +87,69 @@ foreach ($arch in 'amd64', 'x86', 'arm64') {
 $readme = [System.IO.File]::ReadAllText((Join-Path $root 'dist\README.txt'))
 $readme = $readme.Replace('{{VERSION}}', $version) -replace "`r?`n", "`r`n"
 [System.IO.File]::WriteAllText((Join-Path $out 'README.txt'), $readme, (New-Object System.Text.UTF8Encoding $true))
+Write-Host "  パッケージのライセンス表示を作っています…"
+
+# ライセンスの表示。MIT は、配る物の中に著作権とライセンスの表示を入れることを求める。
+# このツール自身の LICENSE と、同梱したパッケージ・.NET の実行環境の表示を入れる。
+# パッケージは、実際に同梱したもの（deps.json）を nuspec の情報から拾う。依存が増えても漏れないように
+$utf8Bom = New-Object System.Text.UTF8Encoding $true
+$license = [System.IO.File]::ReadAllText((Join-Path $root 'LICENSE')) -replace "`r?`n", "`r`n"
+[System.IO.File]::WriteAllText((Join-Path $out 'LICENSE.txt'), $license, $utf8Bom)
+
+$packages = @{}
+foreach ($deps in Get-ChildItem $out -Filter '*.deps.json') {
+    $json = Get-Content $deps.FullName -Raw | ConvertFrom-Json
+    foreach ($library in $json.libraries.PSObject.Properties) {
+        if ($library.Value.type -eq 'package') { $packages[$library.Name] = $true }
+    }
+}
+$nugetRoot = if ($env:NUGET_PACKAGES) { $env:NUGET_PACKAGES } else { Join-Path $HOME '.nuget\packages' }
+$bundledRuntime = (Get-Content (Join-Path $out 'PCMonitor.runtimeconfig.json') -Raw | ConvertFrom-Json).runtimeOptions.includedFrameworks
+
+$notices = New-Object System.Collections.Generic.List[string]
+$notices.Add("PCMonitor $version に同梱している、ほかの人が作ったもの")
+$notices.Add('======================================================')
+$notices.Add('')
+$notices.Add('PCMonitor 自身のライセンスは LICENSE.txt（MIT）を見てください。')
+$notices.Add('次のものは、それぞれの著作権者が MIT ライセンスで公開しているものです。')
+$notices.Add('MIT ライセンスの全文は、このファイルの最後にあります。')
+$notices.Add('')
+$notices.Add('----------------------------------------')
+$notices.Add('.NET の実行環境（' + (($bundledRuntime | ForEach-Object { "$($_.name) $($_.version)" }) -join '、') + '）')
+$notices.Add('  ライセンス: MIT')
+$notices.Add('  著作権: Copyright (c) .NET Foundation and Contributors')
+$notices.Add('  入手元: https://github.com/dotnet/runtime 、https://github.com/dotnet/wpf')
+$notices.Add('  .NET が含むほかの人の成果物の表示:')
+$notices.Add('    https://github.com/dotnet/runtime/blob/main/THIRD-PARTY-NOTICES.TXT')
+$notices.Add('    https://github.com/dotnet/wpf/blob/main/THIRD-PARTY-NOTICES.TXT')
+foreach ($name in ($packages.Keys | Sort-Object)) {
+    $id, $packageVersion = $name -split '/'
+    $spec = Get-ChildItem (Join-Path $nugetRoot "$($id.ToLowerInvariant())\$packageVersion") -Filter '*.nuspec' -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if (-not $spec) { throw "パッケージの情報（nuspec）が見つかりません: $name" }
+    [xml]$nuspec = Get-Content $spec.FullName -Raw
+    $meta = $nuspec.package.metadata
+    $expression = if ($meta.license -and $meta.license.type -eq 'expression') { $meta.license.'#text' } else { $null }
+    # MIT 以外が入ってきたら、表示の書き方を確かめるまで ZIP を作らない
+    if ($expression -ne 'MIT') { throw "MIT 以外のライセンスのパッケージが入りました: $name（$expression）。表示の書き方を確かめてください" }
+    $notices.Add('')
+    $notices.Add('----------------------------------------')
+    $notices.Add("$id $packageVersion")
+    $notices.Add('  ライセンス: MIT')
+    $notices.Add('  著作権: ' + (($meta.copyright -replace '\s+', ' ').Trim() -replace '^©\s*', ''))
+    if ($meta.projectUrl) { $notices.Add("  入手元: $($meta.projectUrl)") }
+    if ($id -eq 'Microsoft.Diagnostics.Tracing.TraceEvent') {
+        $notices.Add("  このパッケージに含まれる Microsoft の補助 DLL（$keep\KernelTraceControl.dll、$keep\msdia140.dll）も同梱しています")
+    }
+}
+$notices.Add('')
+$notices.Add('----------------------------------------')
+$notices.Add('MIT ライセンスの全文（上の著作権の表示と組み合わせて読みます）')
+$notices.Add('')
+# LICENSE の本文のうち、著作権の行より後ろ（許諾と免責の部分）を使う
+$licenseBody = ($license -split "`r`n") | Select-Object -Skip 4
+foreach ($line in $licenseBody) { $notices.Add($line) }
+[System.IO.File]::WriteAllText((Join-Path $out 'THIRD-PARTY-NOTICES.txt'), (($notices -join "`r`n").TrimEnd() + "`r`n"), $utf8Bom)
 
 # ZIP は、展開すると PCMonitor-<版>-<実行環境> のフォルダーができる形にする
 Add-Type -AssemblyName System.IO.Compression.FileSystem
