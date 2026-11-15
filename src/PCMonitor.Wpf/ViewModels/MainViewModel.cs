@@ -209,7 +209,23 @@ public sealed class MainViewModel : ReactiveObject, IDisposable
     public IReadOnlyList<StatusLine> CurrentState
     {
         get => _currentState;
-        private set => this.RaiseAndSetIfChanged(ref _currentState, value);
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _currentState, value);
+            this.RaisePropertyChanged(nameof(StateWarningMark));
+        }
+    }
+
+    /// <summary>
+    /// 「いまの状態」のタブ見出しに添える警告の印。タブに隠れても見落とさないよう、警告があるときだけ件数を出す。
+    /// </summary>
+    public string StateWarningMark
+    {
+        get
+        {
+            var n = _currentState.Count(l => l.Level == StatusLevel.Warning);
+            return n == 0 ? "" : $" ⚠ {n}";
+        }
     }
 
     // ---- スキャン ----
