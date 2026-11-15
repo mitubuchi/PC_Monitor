@@ -122,16 +122,17 @@ $notices.Add('  入手元: https://github.com/dotnet/runtime 、https://github.c
 $notices.Add('  .NET が含むほかの人の成果物の表示:')
 $notices.Add('    https://github.com/dotnet/runtime/blob/main/THIRD-PARTY-NOTICES.TXT')
 $notices.Add('    https://github.com/dotnet/wpf/blob/main/THIRD-PARTY-NOTICES.TXT')
-foreach ($name in ($packages.Keys | Sort-Object)) {
-    $id, $packageVersion = $name -split '/'
+# $name（ZIP の名前）を上書きしないよう、別の名前で回す（v0.2.1 と 0.5.0 の .sha256.txt のファイル名が、これで壊れていた）
+foreach ($package in ($packages.Keys | Sort-Object)) {
+    $id, $packageVersion = $package -split '/'
     $spec = Get-ChildItem (Join-Path $nugetRoot "$($id.ToLowerInvariant())\$packageVersion") -Filter '*.nuspec' -ErrorAction SilentlyContinue |
         Select-Object -First 1
-    if (-not $spec) { throw "パッケージの情報（nuspec）が見つかりません: $name" }
+    if (-not $spec) { throw "パッケージの情報（nuspec）が見つかりません: $package" }
     [xml]$nuspec = Get-Content $spec.FullName -Raw
     $meta = $nuspec.package.metadata
     $expression = if ($meta.license -and $meta.license.type -eq 'expression') { $meta.license.'#text' } else { $null }
     # MIT 以外が入ってきたら、表示の書き方を確かめるまで ZIP を作らない
-    if ($expression -ne 'MIT') { throw "MIT 以外のライセンスのパッケージが入りました: $name（$expression）。表示の書き方を確かめてください" }
+    if ($expression -ne 'MIT') { throw "MIT 以外のライセンスのパッケージが入りました: $package（$expression）。表示の書き方を確かめてください" }
     $notices.Add('')
     $notices.Add('----------------------------------------')
     $notices.Add("$id $packageVersion")
