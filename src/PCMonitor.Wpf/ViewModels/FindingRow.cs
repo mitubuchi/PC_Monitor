@@ -52,7 +52,7 @@ public sealed class FindingRow : ReactiveObject
 
         DeviceUsages = finding.DeviceUsages
             .OrderByDescending(u => u.LastStartUtc)
-            .Select(u => $"{u.DeviceDisplay}　{(u.InUse ? "いま使用中の見込み" : "")}"
+            .Select(u => $"{u.DeviceDisplay}　{(u.InUse ? "いま使用中の見込み　" : u.LeftUnclosed ? "止めた記録が無いが、いまは動いていない　" : "")}"
                          + $"使い始め {u.LastStartUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "—"}"
                          + $"　終わり {u.LastStopUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "—"}")
             .ToList();

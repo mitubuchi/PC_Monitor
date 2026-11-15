@@ -62,9 +62,10 @@ public class RemoteTests
         Assert.Null(RemoteToolCatalog.MatchInstalled("Windows SDK DirectX x64 Remote"));
 
     [Fact]
-    public void まだ署名者を確かめた製品は無い() =>
-        // 確かめたら、この試験を書き換え、確かめた日と版を設計書 §16 に書き戻す
-        Assert.All(RemoteToolCatalog.Entries, e => Assert.False(e.SignersVerified));
+    public void 署名者を確かめた製品は_実物で見たものだけ() =>
+        // 確かめたら、ここに足し、確かめた日と版を設計書 §16 に書き戻す
+        Assert.Equal(new[] { "Chrome リモート デスクトップ" },
+            RemoteToolCatalog.Entries.Where(e => e.SignersVerified).Select(e => e.Product));
 
     // ---- 採点（§16.3） ----
 

@@ -9,12 +9,26 @@ namespace PCMonitor.Core.Collectors;
 ///
 /// この PC（2026-11-15、通常の権限）で列挙できたのは <c>Default</c> だけ。<c>Winlogon</c> などは
 /// 守られていて、通常の権限では列挙に出てこない。ほかのウィンドウ ステーションやセッションの中は見えない。
+/// 別の PC（Lenovo）では、メーカーの電源管理ソフトが作るデスクトップも出た（<see cref="KnownMakers"/>）。
 /// </summary>
 public sealed class DesktopCollector
 {
     /// <summary>Windows が自分で作るデスクトップの名前。</summary>
     public static readonly IReadOnlySet<string> FamiliarNames =
         new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Default", "Winlogon", "Disconnect", "Screen-saver" };
+
+    /// <summary>
+    /// Windows 以外の正規のソフトが作ると分かっている名前と、その作り主。**見慣れた名前には入れない。**
+    /// 名前は誰でも付けられるので、名前だけで点検から外すと、同じ名前を付けた手口を見逃す。
+    /// 注意の表示も、中のウィンドウの点検も変えず、帯に手がかりを添えるだけにする（設計書 §16.11）。
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, string> KnownMakers =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            // 2026-11-15 に確認: Lenovo Power Manager Host 10.2.5.3（C:\Windows\SysWOW64\Lenovo\PowerMgr\PowerMgr.exe）が
+            // このデスクトップのハンドルを持っていた。ウィンドウは置かない
+            ["DummyDesktopForInstantResume"] = "Lenovo の電源管理ソフト（PowerMgr.exe）",
+        };
 
     public void Collect(ScanFacts facts, CancellationToken cancel)
     {

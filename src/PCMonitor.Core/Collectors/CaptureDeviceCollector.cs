@@ -11,7 +11,8 @@ namespace PCMonitor.Core.Collectors;
 ///   ├─ &lt;パッケージ名&gt;\              ストア アプリ
 ///   └─ NonPackaged\&lt;パス&gt;\          ふつうのアプリ。パスの \ が # に置き換わっている
 ///        ├─ LastUsedTimeStart      FILETIME
-///        └─ LastUsedTimeStop       FILETIME（0 なら、いま使っている見込み）
+///        └─ LastUsedTimeStop       FILETIME（0 なら、いま使っている見込み。ただし異常終了でも 0 のまま残るので、
+///                                  アプリが動いているかを合わせて見る）
 /// </code>
 ///
 /// 画面の取り込みは、ここには記録されない（設計書 §16.6）。
@@ -57,7 +58,23 @@ public sealed class CaptureDeviceCollector
     {
         var start = FromFileTime(key.GetValue("LastUsedTimeStart"));
         if (start is null) return;
-        facts.DeviceUsages.Add(new DeviceUsage(device, app, path, start, FromFileTime(key.GetValue("LastUsedTimeStop"))));
+        var usage = new DeviceUsage(device, app, path, start, FromFileTime(key.GetValue("LastUsedTimeStop")));
+        facts.DeviceUsages.Add(usage.Unclosed ? usage with { Running = IsRunning(facts.Processes, path) } : usage);
+    }
+
+    /// <summary>
+    /// そのアプリがいま動いているか。分からなければ null（ストア アプリ、プロセスの一覧を取れなかった）。
+    /// 実行ファイルを確かめられなかったプロセス（管理者として動いているものなど）は、名前が同じなら動いているとみなす。
+    /// 「動いていない」と言い切るのは、見逃す側に倒れる判断なので、言えるときだけにする。
+    /// </summary>
+    internal static bool? IsRunning(IReadOnlyList<ProcessFact> processes, string? path)
+    {
+        if (path is null || processes.Count == 0) return null;
+        var name = System.IO.Path.GetFileNameWithoutExtension(path);
+        return processes.Any(p => p.Path is not null
+            ? string.Equals(p.Path, path, StringComparison.OrdinalIgnoreCase)
+            : string.Equals(System.IO.Path.GetFileNameWithoutExtension(p.Name), name, StringComparison.OrdinalIgnoreCase)
+              || string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary><c>C:#Users#u#app.exe</c> → <c>C:\Users\u\app.exe</c>。</summary>

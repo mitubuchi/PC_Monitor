@@ -163,10 +163,14 @@ public static class CurrentStateBuilder
             return new StatusLine(label, "見慣れないものは無い", StatusLevel.Normal,
                 $"{scope}。あったもの: {string.Join("、", facts.Desktops.Select(d => d.Name))}");
 
+        // 作り主が分かっている名前には、手がかりを添える。名前は誰でも付けられるので、注意の度合いは変えない
+        string Maker(DesktopFact desktop) =>
+            Collectors.DesktopCollector.KnownMakers.TryGetValue(desktop.Name, out var maker) ? $"。この名前は{maker}が作る" : "";
+
         string Owners(DesktopFact desktop)
         {
-            if (desktop.Error is not null) return $"中を見られなかった: {desktop.Error}";
-            if (desktop.WindowOwners.Count == 0) return "ウィンドウは無い";
+            if (desktop.Error is not null) return $"中を見られなかった: {desktop.Error}{Maker(desktop)}";
+            if (desktop.WindowOwners.Count == 0) return "ウィンドウは無い" + Maker(desktop);
             var names = desktop.WindowOwners.Select(pid =>
                 findings.FirstOrDefault(f => f.Processes.Any(p => p.Pid == pid))?.Name ?? $"PID {pid}");
             return "ウィンドウを持つもの: " + string.Join("、", names.Distinct());

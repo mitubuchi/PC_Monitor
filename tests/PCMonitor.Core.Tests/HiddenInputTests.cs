@@ -80,6 +80,31 @@ public class HiddenInputTests
     }
 
     [Fact]
+    public void 作り主が分かっている名前でも_見慣れた扱いにはしない()
+    {
+        // Lenovo の電源管理ソフトが作る名前。名前は誰でも付けられるので、点検からは外さない
+        const string name = "DummyDesktopForInstantResume";
+        Assert.DoesNotContain(name, DesktopCollector.FamiliarNames);
+
+        _facts.Desktops.Add(new DesktopFact(name, false, Array.Empty<int>()));
+        var line = Line("隠しデスクトップ");
+        Assert.Equal(StatusLevel.Notice, line.Level);
+        Assert.Contains("Lenovo", line.Text);
+    }
+
+    [Fact]
+    public void 作り主が分かっている名前でも_ウィンドウがあれば警告して点を付ける()
+    {
+        Process(10, @"C:\Program Files\Vendor\tool.exe", Vendor);
+        _facts.Desktops.Add(new DesktopFact("DummyDesktopForInstantResume", false, new[] { 10 }));
+
+        Assert.Equal(30, Assert.Single(Score()).Indicators.Single(i => i.Kind == IndicatorKind.HiddenDesktopWindow).Points);
+        var line = Line("隠しデスクトップ");
+        Assert.Equal(StatusLevel.Warning, line.Level);
+        Assert.DoesNotContain("Lenovo", line.Text);
+    }
+
+    [Fact]
     public void 中を見られなかったデスクトップは_そう書く()
     {
         _facts.Desktops.Add(new DesktopFact("locked", false, Array.Empty<int>(), "開けなかった（エラー 5）"));

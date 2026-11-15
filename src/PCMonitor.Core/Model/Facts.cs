@@ -182,10 +182,24 @@ public enum CaptureDevice
 /// アプリがカメラやマイクを最後に使った記録（設計書 §16.2 E）。Windows が自分で残している。
 /// <see cref="Path"/> は、ふつうのアプリ（NonPackaged）なら実行ファイル、ストア アプリなら null。
 /// </summary>
-public sealed record DeviceUsage(CaptureDevice Device, string App, string? Path, DateTime? LastStartUtc, DateTime? LastStopUtc)
+/// <param name="Running">
+/// 止めた記録が無いときに、そのアプリがいま動いているか。確かめられなかった（ストア アプリ、プロセスの一覧が無い）なら null。
+/// </param>
+public sealed record DeviceUsage(CaptureDevice Device, string App, string? Path, DateTime? LastStartUtc, DateTime? LastStopUtc,
+    bool? Running = null)
 {
     /// <summary>使い始めた記録があり、止めた記録が無い（0）か、止めたより後に使い始めている。</summary>
-    public bool InUse => LastStartUtc is { } start && (LastStopUtc is not { } stop || stop < start);
+    public bool Unclosed => LastStartUtc is { } start && (LastStopUtc is not { } stop || stop < start);
+
+    /// <summary>
+    /// いま使っている見込み。止めた記録が無くても、そのアプリが動いていないと分かっていれば、使用中とはしない。
+    /// 異常終了すると止めた時刻が 0 のまま残り、何年も「使用中」に見える（2024 年の記録で実際に起きた。設計書 §16.11）。
+    /// 動いているかを確かめられなかったときは、見逃さない側（使用中）に倒す。
+    /// </summary>
+    public bool InUse => Unclosed && Running != false;
+
+    /// <summary>止めた記録が無いまま、アプリは終わっている。</summary>
+    public bool LeftUnclosed => Unclosed && Running == false;
 
     public string DeviceDisplay => Device == CaptureDevice.Camera ? "カメラ" : "マイク";
 

@@ -410,7 +410,7 @@ public sealed class Scorer
 
         var uses = string.Join("、", finding.DeviceUsages
             .OrderByDescending(u => u.LastStartUtc)
-            .Select(u => $"{u.DeviceDisplay}（{(u.InUse ? "いま使用中の見込み" : $"最後は {u.LastStartUtc!.Value.ToLocalTime():yyyy-MM-dd HH:mm}")}）"));
+            .Select(u => $"{u.DeviceDisplay}（{(u.InUse ? "いま使用中の見込み" : $"最後は {u.LastStartUtc!.Value.ToLocalTime():yyyy-MM-dd HH:mm}{(u.LeftUnclosed ? "。止めた記録が無いが、いまは動いていない" : "")}")}）"));
         Add(finding, IndicatorKind.CaptureDeviceUse, 0, "カメラ/マイク", $"使った記録がある: {uses}");
 
         // 署名を確かめられなかった（ファイルが無い）ものには付けない

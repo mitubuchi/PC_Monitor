@@ -137,6 +137,53 @@ public class RemoteHistoryTests
     }
 
     [Fact]
+    public void 止めた記録が無くても_動いていないと分かっていれば使用中としない()
+    {
+        // 異常終了すると、止めた時刻が 0 のまま残る
+        var crashed = new DeviceUsage(CaptureDevice.Camera, "a", @"C:\a.exe", Now.AddYears(-2), null, Running: false);
+        Assert.False(crashed.InUse);
+        Assert.True(crashed.LeftUnclosed);
+
+        var live = crashed with { Running = true };
+        Assert.True(live.InUse);
+        Assert.False(live.LeftUnclosed);
+    }
+
+    [Fact]
+    public void 動いているかは_パスで比べる()
+    {
+        const string path = @"D:\Cam\Binary\facetracker.exe";
+        ProcessFact Process(string name, string? processPath) => new(1, 0, name, processPath, null, false, 1);
+
+        Assert.True(CaptureDeviceCollector.IsRunning(new[] { Process("facetracker.exe", @"d:\cam\binary\FaceTracker.exe") }, path));
+        // 同じ名前でも、別の場所のものは別のアプリ
+        Assert.False(CaptureDeviceCollector.IsRunning(new[] { Process("facetracker.exe", @"D:\Other\facetracker.exe") }, path));
+        // 実行ファイルを確かめられなかったプロセスは、名前が同じなら動いているとみなす（見逃さない側）
+        Assert.True(CaptureDeviceCollector.IsRunning(new[] { Process("facetracker.exe", null) }, path));
+        Assert.True(CaptureDeviceCollector.IsRunning(new[] { Process("facetracker", null) }, path));
+        Assert.False(CaptureDeviceCollector.IsRunning(new[] { Process("other.exe", null) }, path));
+        // 確かめようが無いときは、分からないと返す
+        Assert.Null(CaptureDeviceCollector.IsRunning(Array.Empty<ProcessFact>(), path));
+        Assert.Null(CaptureDeviceCollector.IsRunning(new[] { Process("x.exe", @"C:\x.exe") }, null));
+    }
+
+    [Fact]
+    public void 異常終了で残った記録は_帯で警告しない()
+    {
+        const string path = @"C:\Users\u\AppData\Local\rec.exe";
+        File(path, new SignatureInfo(SignatureStatus.None), writable: true);
+        _facts.DeviceUsages.Add(new DeviceUsage(CaptureDevice.Camera, path, path, Now.AddYears(-2), null, Running: false));
+
+        var line = Line("カメラ・マイク");
+        // 署名の無いプログラムが使った記録としては、注意のまま残す
+        Assert.Equal(StatusLevel.Notice, line.Level);
+        Assert.Contains("使用中のアプリなし", line.Text);
+        Assert.Contains("rec.exe", line.Text);
+        // 点は古くても変えない
+        Assert.Equal(30, Points(Assert.Single(Score()), IndicatorKind.CaptureDeviceUnsigned));
+    }
+
+    [Fact]
     public void 署名の無いプログラムがマイクを使っていたら_30_点()
     {
         const string path = @"C:\Users\u\AppData\Local\rec.exe";

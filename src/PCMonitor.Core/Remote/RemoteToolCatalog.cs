@@ -48,7 +48,8 @@ public static class RemoteToolCatalog
         new("RustDesk", new[] { "rustdesk.exe", "rustdesk*" },
             new[] { "Purslane" }, false, new[] { "RustDesk" }),
         new("Chrome リモート デスクトップ", new[] { "remoting_host.exe", "remoting_desktop.exe", "remoting_start_host.exe" },
-            new[] { "Google" }, false, new[] { "Chrome Remote Desktop" }),
+            // 2026-11-15 に確認: Chrome Remote Desktop Host 157.0.8103.41 の exe 13 個すべてが「Google LLC」
+            new[] { "Google" }, true, new[] { "Chrome Remote Desktop" }),
         new("RealVNC", new[] { "vncserver.exe", "vncviewer.exe", "vncagent.exe" },
             new[] { "RealVNC" }, false, new[] { "RealVNC", "VNC Server", "VNC Viewer" }),
         new("TightVNC", new[] { "tvnserver.exe", "tvnviewer.exe" },
