@@ -6,7 +6,9 @@
 - 利用者の発言は原文のまま。Claude の返答は画面に出た文面
 - Claude が行った操作は「（操作）」として要約した
 - 一時フォルダーのパスは `<一時フォルダー>` に置き換えた
-- 設計書の本文はここに写していない。[designe_add.md](designe_add.md) がそれ
+- 設計書の本文はここに写していない。初版の `designe_add.md` がそれ（いまは消してあり、
+  [f7dfde3 の履歴](https://github.com/mitubuchi/PC_Monitor/blob/f7dfde3/Docs/designe_add.md)で読める。
+  中身はすべて [design.md](design.md) に引き継がれている）
 
 ---
 
