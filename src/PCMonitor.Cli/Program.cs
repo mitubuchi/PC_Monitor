@@ -141,6 +141,16 @@ Console.WriteLine("件数: " + string.Join("  ", new[] { RiskLevel.High, RiskLev
     + (result.HasPrevious ? $"  新規 {result.Findings.Count(f => f.IsNew)}" : "  （前回の結果なし）"));
 Console.WriteLine();
 
+// いまの状態（設計書 §16.4）。危険度順の一覧より先に出す
+Console.WriteLine("--- いまの状態");
+foreach (var line in result.CurrentState)
+{
+    var mark = line.Level switch { StatusLevel.Warning => "[!]", StatusLevel.Notice => "[・]", _ => "[ ]" };
+    Console.WriteLine($"{mark} {line.Label}: {line.Text}");
+    if (line.Detail is not null && (verbose || line.Level == StatusLevel.Warning)) Console.WriteLine($"      {line.Detail}");
+}
+Console.WriteLine();
+
 foreach (var finding in result.Findings)
 {
     var matched = find is not null
@@ -156,6 +166,9 @@ foreach (var finding in result.Findings)
     if (finding.Sha256 is not null) Console.WriteLine($"      SHA-256: {finding.Sha256}");
     foreach (var indicator in finding.Indicators)
         Console.WriteLine($"      ・{(indicator.Points > 0 ? $"+{indicator.Points} " : "")}{indicator.Evidence}");
+    foreach (var installed in finding.Installations)
+        Console.WriteLine($"      インストール: {installed.DisplayName}（{installed.Publisher ?? "発行元不明"}、"
+                          + $"{installed.InstallDate?.ToLocalTime().ToString("yyyy-MM-dd") ?? "日付不明"}）{installed.RegistryKey}");
 }
 
 if (keyApi is not null)

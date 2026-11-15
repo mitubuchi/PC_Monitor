@@ -1,4 +1,5 @@
 using PCMonitor.Core.Model;
+using PCMonitor.Core.Remote;
 using ReactiveUI;
 
 namespace PCMonitor.Wpf.ViewModels;
@@ -38,6 +39,16 @@ public sealed class FindingRow : ReactiveObject
             .OrderBy(c => c.TimeUtc)
             .Select(c => $"{c.TimeUtc.ToLocalTime():HH:mm:ss}　PID {c.Pid}　{c.Description}")
             .ToList();
+
+        RemoteTool = finding.RemoteTool is { } tool
+            ? new[] { $"{tool.Product}（{tool.MatchedBy}で照合。照合表の署名者: {string.Join("・", tool.ExpectedSigners)}"
+                      + $"{(tool.SignersVerified ? "" : "、配布物では未確認")}）" }
+                .Concat(finding.Installations.Select(i =>
+                    $"インストール: {i.DisplayName}（発行元 {i.Publisher ?? "不明"}、"
+                    + $"インストール日 {i.InstallDate?.ToLocalTime().ToString("yyyy-MM-dd") ?? "不明"}）\n　　{i.RegistryKey}"))
+                .Append("接続の記録は、この版では読んでいない（第 3 段階の手順 2 で入れる）")
+                .ToList()
+            : new List<string>();
 
         LoadedBy = finding.LoadedBy
             .GroupBy(h => (h.ProcessName, h.Publisher))
@@ -80,6 +91,12 @@ public sealed class FindingRow : ReactiveObject
     public IReadOnlyList<string> Endpoints { get; }
     public IReadOnlyList<string> LoadedBy { get; }
     public IReadOnlyList<string> KeyApiCalls { get; }
+    public IReadOnlyList<string> RemoteTool { get; }
+
+    public bool HasRemoteTool => RemoteTool.Count > 0;
+
+    /// <summary>心当たりが無いときの次の一歩（設計書 §16.4）。止める操作は置かず、文で示す。</summary>
+    public string RemoteNextStep => CurrentStateBuilder.NextStep;
 
     public bool HasKeyApiCalls => KeyApiCalls.Count > 0;
     public bool HasLoadedBy => LoadedBy.Count > 0;

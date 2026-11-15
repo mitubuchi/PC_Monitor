@@ -5,6 +5,7 @@ using PCMonitor.Core.Allowlist;
 using PCMonitor.Core.Collectors;
 using PCMonitor.Core.Model;
 using PCMonitor.Core.Monitoring;
+using PCMonitor.Core.Remote;
 using PCMonitor.Core.Reports;
 using PCMonitor.Core.Scoring;
 using PCMonitor.Core.Signing;
@@ -51,6 +52,8 @@ public sealed class Scanner
         var elevated = IsElevated();
         var probe = new SystemPathProbe();
         var facts = new ScanFacts();
+        var machine = MachineInfo.Detect();
+        var session = ProcessCollector.CurrentSessionId();
 
         progress?.Report("常駐箇所を点検中…");
         new PersistenceCollector(probe).Collect(facts, cancel);
@@ -63,6 +66,13 @@ public sealed class Scanner
 
         progress?.Report("読み込まれている DLL とメモリの割り当てを点検中…");
         RunCollector(facts, "読み込み DLL とメモリ", () => new MemoryMapCollector().Collect(facts, cancel));
+
+        // 第 3 段階（設計書 §16）。標準の遠隔機能はプロセスの一覧を使う（クイック アシストが動いているか）
+        progress?.Report("遠隔操作の手段を点検中…");
+        RunCollector(facts, "インストール済みのプログラム", () => new InstalledProgramCollector().Collect(facts, cancel));
+        var remote = new RemoteAccessCollector();
+        RunCollector(facts, "標準の遠隔機能", () => remote.CollectFeatures(facts, machine.IsHomeEdition, cancel));
+        RunCollector(facts, "セッション", () => remote.CollectSessions(facts, cancel));
 
         if (keyApi is not null)
         {
@@ -86,9 +96,11 @@ public sealed class Scanner
             facts,
             path => files.TryGetValue(Scorer.FileKey(path), out var file) ? file : FileFacts.Missing(path),
             DateTime.UtcNow,
-            ProcessCollector.CurrentSessionId());
+            session);
 
         new AllowlistStore(_paths.Allowlist).Apply(findings);
+        // 許可リストを当てたあとに作る。許可済みかどうかを帯にも書くため
+        var currentState = CurrentStateBuilder.Build(facts, findings, session);
 
         var hasPrevious = ScanDiff.MarkNew(findings, JsonFiles.Read<LastScan>(_paths.LastScan));
         cancel.ThrowIfCancellationRequested();
@@ -109,7 +121,6 @@ public sealed class Scanner
                 "通常の権限で点検した。ほかの利用者とシステムのプロセス、一部のタスク、WMI イベント購読は管理者でないと見られない", true));
 
         // この PC の条件と、ここでは使えない機能・確かめていない条件を先頭に出す
-        var machine = MachineInfo.Detect();
         var caveats = machine.Caveats().ToList();
         facts.Notes.InsertRange(0, caveats);
         facts.Notes.Insert(0, new ScanNote("この PC", machine.Describe()));
@@ -124,6 +135,7 @@ public sealed class Scanner
             Notes = facts.Notes,
             HasPrevious = hasPrevious,
             Machine = machine,
+            CurrentState = currentState,
         };
     }
 
@@ -149,6 +161,9 @@ public sealed class Scanner
         var paths = facts.Persistence.Select(e => e.Command.TargetPath)
             .Concat(facts.Processes.Select(p => p.Path))
             .Concat(facts.KeyApiCalls.Select(c => c.Path))
+            // インストール済みのプログラムは、遠隔操作ソフトの EXE を指しているものだけ確かめる（全部だと遅い）
+            .Concat(facts.InstalledPrograms.Select(p => p.ExecutablePath)
+                .Where(exe => exe is not null && RemoteToolCatalog.MatchFileName(Path.GetFileName(exe)) is not null))
             .Where(p => p is not null)
             .Select(p => p!)
             .GroupBy(Scorer.FileKey, StringComparer.Ordinal)

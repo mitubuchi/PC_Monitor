@@ -19,6 +19,8 @@ public enum FindingSources
     Network = 4,
     Module = 8,
     KeyApi = 16,
+    /// <summary>遠隔操作ソフトとして照合表に当たった（設計書 §16）。</summary>
+    Remote = 32,
 }
 
 public enum IndicatorKind
@@ -45,12 +47,18 @@ public enum IndicatorKind
     KeyInputCapture,
     KeyStatePolling,
 
+    // 第 3 段階（設計書 §16.3）
+    RemoteToolImpersonation,
+    RemoteToolRecentlyInstalled,
+
     // ここから下は点を付けない「情報」
     MissingFile,
     Unresolved,
     AllowedButChanged,
     ExecutableMemoryNote,
     KeyApiNote,
+    RemoteTool,
+    RemoteToolSignerUnverified,
 }
 
 /// <summary>兆候。点だけでなく、人が確かめられる根拠の文を必ず持つ（設計書 §7）。</summary>
@@ -85,6 +93,12 @@ public sealed class Finding
     /// <summary>見張っている間に、このプログラムが呼んだキー入力に関わる API。</summary>
     public List<Monitoring.KeyApiCall> KeyApiCalls { get; } = new();
 
+    /// <summary>遠隔操作ソフトの照合表に当たったなら、その結果（設計書 §16.2 A）。</summary>
+    public Remote.RemoteToolMatch? RemoteTool { get; set; }
+
+    /// <summary>このプログラムのインストールの記録（Uninstall キー）。</summary>
+    public List<InstalledProgram> Installations { get; } = new();
+
     /// <summary>許可リストに、同じパスと同じハッシュで登録されている。</summary>
     public bool IsAllowed { get; set; }
 
@@ -97,7 +111,8 @@ public sealed class Finding
         | (Processes.Count > 0 ? FindingSources.Process : FindingSources.None)
         | (Endpoints.Count > 0 ? FindingSources.Network : FindingSources.None)
         | (LoadedBy.Count > 0 ? FindingSources.Module : FindingSources.None)
-        | (KeyApiCalls.Count > 0 ? FindingSources.KeyApi : FindingSources.None);
+        | (KeyApiCalls.Count > 0 ? FindingSources.KeyApi : FindingSources.None)
+        | (RemoteTool is not null ? FindingSources.Remote : FindingSources.None);
 
     [JsonIgnore]
     public string LevelDisplay => Level switch
@@ -126,4 +141,23 @@ public sealed class ScanResult
 
     /// <summary>点検した PC の条件。書き出した結果を別の PC で見るときに、どこまで見られたかが分かるように残す。</summary>
     public MachineInfo? Machine { get; init; }
+
+    /// <summary>
+    /// 「いまの状態」の帯（設計書 §16.4）。遠隔操作は「いま起きているか」が大事なので、
+    /// 危険度順の一覧に混ぜずに別に持つ。
+    /// </summary>
+    public List<StatusLine> CurrentState { get; init; } = new();
 }
+
+public enum StatusLevel
+{
+    /// <summary>何も無い、または問題の無い状態。</summary>
+    Normal,
+    /// <summary>有効になっている・入っている。それ自体は異常ではないが、覚えがあるかを確かめる。</summary>
+    Notice,
+    /// <summary>いま遠隔から操作されている・つながっている見込みがある。</summary>
+    Warning,
+}
+
+/// <summary>「いまの状態」の 1 行。何も無くても「なし」と書いて出す（空にしない）。</summary>
+public sealed record StatusLine(string Label, string Text, StatusLevel Level, string? Detail = null);

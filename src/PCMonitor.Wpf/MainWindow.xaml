@@ -105,6 +105,7 @@
                         <ComboBoxItem Content="通信" />
                         <ComboBoxItem Content="DLL" />
                         <ComboBoxItem Content="キー入力" />
+                        <ComboBoxItem Content="遠隔" />
                     </ComboBox>
                     <TextBlock DockPanel.Dock="Right" Text="種別" VerticalAlignment="Center" Margin="16,0,8,0" Foreground="{StaticResource Subtle}" />
                 </DockPanel>
@@ -117,6 +118,71 @@
                                  Visibility="{Binding IsScanning, Converter={StaticResource BoolToVisibility}}" />
                     <TextBlock Text="{Binding Progress}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                 </DockPanel>
+            </StackPanel>
+        </Border>
+
+        <!-- いまの状態（設計書 §16.4）。遠隔操作は「いま起きているか」が大事なので、一覧の上に別に出す -->
+        <Border DockPanel.Dock="Top" BorderBrush="{StaticResource Line}" BorderThickness="0,0,0,1" Padding="12,8">
+            <StackPanel>
+                <TextBlock Text="いまの状態" FontWeight="SemiBold" Margin="0,0,0,4" />
+                <ItemsControl ItemsSource="{Binding CurrentState}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Margin="0,1">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="28" />
+                                    <ColumnDefinition Width="190" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <!-- 色だけに頼らず、記号でも分ける -->
+                                <TextBlock Grid.Column="0" FontWeight="Bold">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Text" Value="―" />
+                                            <Setter Property="Foreground" Value="{StaticResource Subtle}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Level}" Value="Notice">
+                                                    <Setter Property="Text" Value="●" />
+                                                    <Setter Property="Foreground" Value="{StaticResource LevelLow}" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding Level}" Value="Warning">
+                                                    <Setter Property="Text" Value="⚠" />
+                                                    <Setter Property="Foreground" Value="{StaticResource LevelHigh}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <TextBlock Grid.Column="1" Text="{Binding Label}" Foreground="{StaticResource Subtle}" />
+                                <StackPanel Grid.Column="2">
+                                    <TextBox Margin="0" Text="{Binding Text, Mode=OneWay}">
+                                        <TextBox.Style>
+                                            <Style TargetType="TextBox" BasedOn="{StaticResource FieldValue}">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Level}" Value="Warning">
+                                                        <Setter Property="Foreground" Value="{StaticResource LevelHigh}" />
+                                                        <Setter Property="FontWeight" Value="SemiBold" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBox.Style>
+                                    </TextBox>
+                                    <TextBox Margin="0" Text="{Binding Detail, Mode=OneWay}" Foreground="{StaticResource Subtle}">
+                                        <TextBox.Style>
+                                            <Style TargetType="TextBox" BasedOn="{StaticResource FieldValue}">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Detail}" Value="{x:Null}">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBox.Style>
+                                    </TextBox>
+                                </StackPanel>
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
             </StackPanel>
         </Border>
 
@@ -304,6 +370,13 @@
                             <StackPanel Visibility="{Binding HasRegistrations, Converter={StaticResource BoolToVisibility}}">
                                 <TextBlock Style="{StaticResource SectionTitle}" Text="常駐箇所への登録" />
                                 <ItemsControl ItemsSource="{Binding Registrations}" ItemTemplate="{StaticResource DetailLine}" />
+                            </StackPanel>
+
+                            <StackPanel Visibility="{Binding HasRemoteTool, Converter={StaticResource BoolToVisibility}}">
+                                <TextBlock Style="{StaticResource SectionTitle}" Text="遠隔操作ソフト" />
+                                <ItemsControl ItemsSource="{Binding RemoteTool}" ItemTemplate="{StaticResource DetailLine}" />
+                                <TextBox Style="{StaticResource FieldValue}" Foreground="{StaticResource Subtle}"
+                                         Text="{Binding RemoteNextStep, Mode=OneWay, StringFormat=心当たりが無いとき: {0}}" />
                             </StackPanel>
 
                             <StackPanel Visibility="{Binding HasKeyApiCalls, Converter={StaticResource BoolToVisibility}}">

@@ -142,6 +142,36 @@ public sealed record EndpointFact(
         address.Contains(':') ? $"[{address}]:{port}" : $"{address}:{port}";
 }
 
+/// <summary>
+/// インストール済みのプログラム（Uninstall キーの 1 件。設計書 §16.2 A）。
+/// <see cref="ExecutablePath"/> は、表示用のアイコンが実在する EXE を指していたときだけ入る。
+/// </summary>
+public sealed record InstalledProgram(
+    string DisplayName,
+    string? Publisher,
+    DateTime? InstallDate,
+    string? InstallLocation,
+    string? ExecutablePath,
+    string RegistryKey);
+
+/// <summary>Windows 標準の遠隔機能の状態（設計書 §16.2 B）。</summary>
+/// <param name="Enabled">遠隔から使える状態か。読めなかった・判断できないなら null。</param>
+public sealed record RemoteFeature(string Name, bool? Enabled, string State, string Evidence);
+
+/// <summary>ログオンのセッション 1 つ（設計書 §16.2 C）。</summary>
+public sealed record SessionFact(
+    int SessionId,
+    string WinStation,
+    string State,
+    string? User,
+    string? ClientName,
+    string? ClientAddress,
+    bool IsCurrent)
+{
+    /// <summary>リモートデスクトップのセッションか（ウィンドウ ステーションの名前が RDP-Tcp#… になる）。</summary>
+    public bool IsRemote => WinStation.StartsWith("RDP-", StringComparison.OrdinalIgnoreCase);
+}
+
 /// <summary>点検できなかった項目。全体は止めず、画面に出す（設計書 §8）。</summary>
 public sealed record ScanNote(string Area, string Message, bool NeedsAdmin = false);
 
@@ -166,6 +196,14 @@ public sealed class ScanFacts
 
     /// <summary>見張っている間に起きた、キー入力に関わる API の呼び出し（設計書 §11.5）。見張っていなければ空。</summary>
     public List<Monitoring.KeyApiCall> KeyApiCalls { get; } = new();
+
+    // 第 3 段階（設計書 §16）
+    public List<InstalledProgram> InstalledPrograms { get; } = new();
+    public List<RemoteFeature> RemoteFeatures { get; } = new();
+    public List<SessionFact> Sessions { get; } = new();
+
+    /// <summary>点検している画面そのものがリモート経由か（<c>SM_REMOTESESSION</c>）。</summary>
+    public bool CurrentSessionIsRemote { get; set; }
 
     public List<ScanNote> Notes { get; } = new();
 }

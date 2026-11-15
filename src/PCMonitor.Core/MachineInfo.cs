@@ -18,23 +18,39 @@ public sealed record MachineInfo(
     string OsArchitecture,
     string ProcessArchitecture,
     bool Elevated,
-    string Runtime)
+    string Runtime,
+    string Edition = "")
 {
+    /// <summary>Home 版か（レジストリの EditionID が Core…）。Home 版はリモートデスクトップを受け付けない。</summary>
+    public bool IsHomeEdition => Edition.StartsWith("Core", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>動作を確かめた Windows（2026-11-13、Windows 11 25H2）。</summary>
     public const int VerifiedBuild = 26200;
 
     public string Describe() =>
-        $"{WindowsName} {DisplayVersion}（ビルド {Build}）、{OsArchitecture}、{(Elevated ? "管理者" : "通常")}の権限、{Runtime}";
+        $"{WindowsName}{EditionDisplay} {DisplayVersion}（ビルド {Build}）、{OsArchitecture}、{(Elevated ? "管理者" : "通常")}の権限、{Runtime}";
+
+    private string EditionDisplay => Edition switch
+    {
+        "" => "",
+        _ when IsHomeEdition => " Home",
+        "Professional" or "ProfessionalN" => " Pro",
+        "Enterprise" or "EnterpriseN" => " Enterprise",
+        "Education" or "EducationN" => " Education",
+        _ => $"（{Edition}）",
+    };
 
     public static MachineInfo Detect()
     {
         var build = Environment.OSVersion.Version.Build;
         string displayVersion = "";
+        string edition = "";
         try
         {
             using var key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion");
             displayVersion = key?.GetValue("DisplayVersion") as string ?? key?.GetValue("ReleaseId") as string ?? "";
             if (key?.GetValue("CurrentBuild") is string text && int.TryParse(text, out var registryBuild)) build = registryBuild;
+            edition = key?.GetValue("EditionID") as string ?? "";
         }
         catch (Exception ex) when (ex is System.Security.SecurityException or UnauthorizedAccessException or IOException)
         {
@@ -49,7 +65,8 @@ public sealed record MachineInfo(
             RuntimeInformation.OSArchitecture.ToString(),
             RuntimeInformation.ProcessArchitecture.ToString(),
             Scanner.IsElevated(),
-            RuntimeInformation.FrameworkDescription);
+            RuntimeInformation.FrameworkDescription,
+            edition);
     }
 
     /// <summary>この PC で使えない機能や、確かめていない条件。スキャンの注意書きに出す。</summary>

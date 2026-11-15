@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using PCMonitor.Core.Collectors;
 using PCMonitor.Core.Model;
+using PCMonitor.Core.Remote;
 
 namespace PCMonitor.Core.Scoring;
 
@@ -36,6 +37,10 @@ public sealed class ScoringRules
     public int ExecutableMappedData { get; init; } = 30;
     public int KeyInputCapture { get; init; } = 30;
     public int KeyStatePolling { get; init; } = 15;
+
+    // 第 3 段階（設計書 §16.3）
+    public int RemoteToolImpersonation { get; init; } = 40;
+    public int RemoteToolRecentlyInstalled { get; init; } = 20;
 
     /// <summary>発行元の違うプログラムが、この数以上その DLL を読み込んでいたら「広く入り込んでいる」とする。</summary>
     public int ModulePublisherThreshold { get; init; } = 3;
@@ -156,9 +161,12 @@ public sealed class Scorer
             finding.Endpoints.Add(endpoint);
         }
 
+        AttachRemoteTools(findings, facts);
+
         foreach (var finding in findings.Values)
         {
             if (finding.Path is not null) AddFileIndicators(finding, files(finding.Path), nowUtc);
+            AddRemoteToolIndicators(finding, nowUtc);
             AddPersistenceIndicators(finding);
             AddProcessIndicators(finding, scannerSession);
             AddParentIndicators(finding, processes);
@@ -231,6 +239,43 @@ public sealed class Scorer
         return finding;
     }
 
+    /// <summary>
+    /// 遠隔操作ソフトの照合表と突き合わせる（設計書 §16.2 A）。実行ファイル名で当てたうえで、
+    /// インストールの記録（Uninstall キー）を同じ製品の候補にまとめる。動いていない・常駐していない
+    /// 遠隔操作ソフトも、インストールの記録から 1 件として出す（点が 0 でも一覧に載る）。
+    /// </summary>
+    private static void AttachRemoteTools(Dictionary<string, Finding> findings, ScanFacts facts)
+    {
+        foreach (var finding in findings.Values)
+        {
+            if (RemoteToolCatalog.MatchFileName(finding.Name) is { } entry)
+                finding.RemoteTool = new RemoteToolMatch(entry.Product, "実行ファイル名", entry.Signers, entry.SignersVerified);
+        }
+
+        foreach (var program in facts.InstalledPrograms)
+        {
+            var byExe = program.ExecutablePath is { } exe ? RemoteToolCatalog.MatchFileName(Path.GetFileName(exe)) : null;
+            var entry = RemoteToolCatalog.MatchInstalled(program.DisplayName) ?? byExe;
+            if (entry is null) continue;
+
+            // アイコンが同じ製品の EXE を指していれば、その実行ファイルの候補にまとめる。
+            // そうでなければ、すでに挙がっている同じ製品の候補に、それも無ければ製品名の候補にまとめる
+            Finding target;
+            if (byExe == entry)
+            {
+                target = ForFile(findings, program.ExecutablePath!);
+                target.RemoteTool ??= new RemoteToolMatch(entry.Product, "実行ファイル名", entry.Signers, entry.SignersVerified);
+            }
+            else
+            {
+                target = findings.Values.FirstOrDefault(f => f.RemoteTool?.Product == entry.Product)
+                         ?? ForName(findings, "remote:" + entry.Product.ToLowerInvariant(), entry.Product);
+                target.RemoteTool ??= new RemoteToolMatch(entry.Product, "インストールの記録", entry.Signers, entry.SignersVerified);
+            }
+            target.Installations.Add(program);
+        }
+    }
+
     // ---- 兆候 ----
 
     private void AddFileIndicators(Finding finding, FileFacts file, DateTime nowUtc)
@@ -289,6 +334,59 @@ public sealed class Scorer
             Add(finding, IndicatorKind.RecentlyCreated, _rules.RecentlyCreated, "新しい",
                 $"ファイルの作成日時が {_rules.RecentDays} 日以内（{created.ToLocalTime():yyyy-MM-dd HH:mm}）");
     }
+
+    /// <summary>
+    /// 遠隔操作ソフトの兆候（設計書 §16.3）。入っていること自体は異常ではないので、照合に当たっただけでは
+    /// 点を付けない。常駐・通信・書き込める場所は、既存の兆候をそのまま使い、ここでは重ねない。
+    /// </summary>
+    private void AddRemoteToolIndicators(Finding finding, DateTime nowUtc)
+    {
+        if (finding.RemoteTool is not { } tool) return;
+
+        var state = new List<string>();
+        if (finding.Processes.Count > 0) state.Add("動作中");
+        if (finding.Persistence.Any(e => e.AutoStarts)) state.Add("自動起動");
+        if (finding.Installations.Count > 0) state.Add("インストール済み");
+        Add(finding, IndicatorKind.RemoteTool, 0, "遠隔",
+            $"遠隔操作ソフト「{tool.Product}」（{tool.MatchedBy}で照合、{(state.Count == 0 ? "状態不明" : string.Join("・", state))}）。"
+            + "入っていること自体は異常ではない。入れた覚えがあるか、いま使っているかを確かめる");
+
+        // なりすまし。名前で当てたもので、ファイルの署名を確かめられたときだけ見る
+        var signature = finding.Signature;
+        var entry = RemoteToolCatalog.Entries.First(e => e.Product == tool.Product);
+        if (finding.Path is not null && signature.Status != SignatureStatus.Unknown && !RemoteToolCatalog.SignerMatches(entry, signature))
+        {
+            var expected = string.Join("・", tool.ExpectedSigners);
+            if (!signature.IsValid)
+                Add(finding, IndicatorKind.RemoteToolImpersonation, _rules.RemoteToolImpersonation, "なりすまし",
+                    $"名前は遠隔操作ソフト「{tool.Product}」だが、署名が{(signature.Status == SignatureStatus.None ? "無い" : "有効でない")}"
+                    + $"（本物は「{expected}」の署名付きの見込み）");
+            else if (tool.SignersVerified)
+                Add(finding, IndicatorKind.RemoteToolImpersonation, _rules.RemoteToolImpersonation, "なりすまし",
+                    $"名前は遠隔操作ソフト「{tool.Product}」だが、署名者「{signature.Publisher}」が照合表（{expected}）と違う");
+            else
+                Add(finding, IndicatorKind.RemoteToolSignerUnverified, 0, "署名者違い",
+                    $"署名者「{signature.Publisher}」が、照合表の候補（{expected}）と違う。照合表の署名者は配布物で確かめていないので、点は付けない");
+        }
+
+        // 入れたばかり。電話で入れさせた直後の状態がこれに当たる。署名が有効でも数える
+        var installed = finding.Installations.Select(i => i.InstallDate).Where(d => d is not null).Max();
+        string? recent = null;
+        if (IsRecent(installed, nowUtc))
+            recent = $"遠隔操作ソフトが、インストールされて {_rules.RecentDays} 日以内（{installed!.Value.ToLocalTime():yyyy-MM-dd}）";
+        else if (IsRecent(finding.FileCreatedUtc, nowUtc))
+            recent = $"遠隔操作ソフトの実行ファイルが、作られて {_rules.RecentDays} 日以内（{finding.FileCreatedUtc!.Value.ToLocalTime():yyyy-MM-dd HH:mm}）。"
+                     + "インストールせずに、ダウンロードしたものをそのまま動かしている形もこれに当たる";
+        if (recent is not null)
+        {
+            // 未署名なら「新しい」+10 も付いている。同じ事実を二重に数えない
+            finding.Indicators.RemoveAll(i => i.Kind == IndicatorKind.RecentlyCreated);
+            Add(finding, IndicatorKind.RemoteToolRecentlyInstalled, _rules.RemoteToolRecentlyInstalled, "入れたばかり", recent);
+        }
+    }
+
+    private bool IsRecent(DateTime? utc, DateTime nowUtc) =>
+        utc is { } value && value <= nowUtc && nowUtc - value <= TimeSpan.FromDays(_rules.RecentDays);
 
     private void AddPersistenceIndicators(Finding finding)
     {

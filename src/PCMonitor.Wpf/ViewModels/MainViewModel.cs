@@ -33,6 +33,10 @@ public sealed class MainViewModel : ReactiveObject, IDisposable
     private IReadOnlyList<FindingRow> _rows = Array.Empty<FindingRow>();
     private FindingRow? _selected;
     private IReadOnlyList<ScanNote> _notes = Array.Empty<ScanNote>();
+    private IReadOnlyList<StatusLine> _currentState = new[]
+    {
+        new StatusLine("いまの状態", "スキャンすると、リモート セッション・遠隔操作ソフト・Windows の遠隔機能の状態をここに出します", StatusLevel.Normal),
+    };
 
     public MainViewModel()
     {
@@ -140,7 +144,7 @@ public sealed class MainViewModel : ReactiveObject, IDisposable
         set => this.RaiseAndSetIfChanged(ref _showAllowed, value);
     }
 
-    /// <summary>0: すべて、1: 常駐、2: プロセス、3: 通信、4: DLL、5: キー入力</summary>
+    /// <summary>0: すべて、1: 常駐、2: プロセス、3: 通信、4: DLL、5: キー入力、6: 遠隔</summary>
     public int KindFilter
     {
         get => _kindFilter;
@@ -178,6 +182,13 @@ public sealed class MainViewModel : ReactiveObject, IDisposable
         private set => this.RaiseAndSetIfChanged(ref _notes, value);
     }
 
+    /// <summary>「いまの状態」の帯（設計書 §16.4）。スキャンのたびに作り直す。</summary>
+    public IReadOnlyList<StatusLine> CurrentState
+    {
+        get => _currentState;
+        private set => this.RaiseAndSetIfChanged(ref _currentState, value);
+    }
+
     // ---- スキャン ----
 
     private async Task ScanAsync()
@@ -196,6 +207,7 @@ public sealed class MainViewModel : ReactiveObject, IDisposable
             _result = result;
             _all = result.Findings.Select(f => new FindingRow(f)).ToList();
             Notes = result.Notes;
+            CurrentState = result.CurrentState;
             Summarize();
             ApplyFilter();
             Progress = $"点検が終わりました（{result.StartedUtc.ToLocalTime():HH:mm:ss}、{result.Elapsed.TotalSeconds:F1} 秒）。";
@@ -238,6 +250,7 @@ public sealed class MainViewModel : ReactiveObject, IDisposable
             3 => FindingSources.Network,
             4 => FindingSources.Module,
             5 => FindingSources.KeyApi,
+            6 => FindingSources.Remote,
             _ => FindingSources.None,
         };
         if (source != FindingSources.None) rows = rows.Where(r => r.Finding.Sources.HasFlag(source));
