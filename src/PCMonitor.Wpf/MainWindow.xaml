@@ -98,7 +98,7 @@
                     </ComboBox>
                     <TextBlock DockPanel.Dock="Right" Text="危険度" VerticalAlignment="Center" Margin="16,0,8,0" Foreground="{StaticResource Subtle}" />
 
-                    <ComboBox DockPanel.Dock="Right" Width="96" SelectedIndex="{Binding KindFilter}" VerticalContentAlignment="Center">
+                    <ComboBox DockPanel.Dock="Right" Width="120" SelectedIndex="{Binding KindFilter}" VerticalContentAlignment="Center">
                         <ComboBoxItem Content="すべて" />
                         <ComboBoxItem Content="常駐" />
                         <ComboBoxItem Content="プロセス" />
@@ -106,6 +106,7 @@
                         <ComboBoxItem Content="DLL" />
                         <ComboBoxItem Content="キー入力" />
                         <ComboBoxItem Content="遠隔" />
+                        <ComboBoxItem Content="カメラ・マイク" />
                     </ComboBox>
                     <TextBlock DockPanel.Dock="Right" Text="種別" VerticalAlignment="Center" Margin="16,0,8,0" Foreground="{StaticResource Subtle}" />
                 </DockPanel>
@@ -377,6 +378,11 @@
                                 <ItemsControl ItemsSource="{Binding RemoteTool}" ItemTemplate="{StaticResource DetailLine}" />
                                 <TextBox Style="{StaticResource FieldValue}" Foreground="{StaticResource Subtle}"
                                          Text="{Binding RemoteNextStep, Mode=OneWay, StringFormat=心当たりが無いとき: {0}}" />
+                            </StackPanel>
+
+                            <StackPanel Visibility="{Binding HasDeviceUsages, Converter={StaticResource BoolToVisibility}}">
+                                <TextBlock Style="{StaticResource SectionTitle}" Text="カメラ・マイクを使った記録" />
+                                <ItemsControl ItemsSource="{Binding DeviceUsages}" ItemTemplate="{StaticResource DetailLine}" />
                             </StackPanel>
 
                             <StackPanel Visibility="{Binding HasKeyApiCalls, Converter={StaticResource BoolToVisibility}}">

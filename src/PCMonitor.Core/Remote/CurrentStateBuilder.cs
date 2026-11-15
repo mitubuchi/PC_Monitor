@@ -23,8 +23,8 @@ public static class CurrentStateBuilder
             Session(facts, scannerSession),
             RemoteTools(findings),
             Features(facts),
-            // カメラ・マイク（§16.2 E）は手順 2 で入れる。行は出しておき、点検していないことを書く
-            new("カメラ・マイク", "この版では点検していない", StatusLevel.Normal),
+            History(facts),
+            Devices(facts, findings),
             OtherUsers(facts),
         };
     }
@@ -87,6 +87,65 @@ public static class CurrentStateBuilder
             on.Count == 0 ? "有効なものは無い" : "有効: " + string.Join("、", on.Select(f => f.Name)),
             on.Count == 0 ? StatusLevel.Normal : StatusLevel.Notice,
             text);
+    }
+
+    /// <summary>遠隔接続の履歴（§16.2 D）。「記録が無い」は「入られていない」ではないことを必ず添える。</summary>
+    private static StatusLine History(ScanFacts facts)
+    {
+        const string label = "遠隔接続の履歴（30 日）";
+        const string caveat = "記録が無いことは、入られていないことを意味しない（管理者の権限を取られていれば、記録は消せる）。"
+                              + "遠隔操作ソフト自身の接続記録は読んでいない";
+        var unread = facts.UnreadLogs.Count > 0 ? $"。見られなかったログ: {string.Join("、", facts.UnreadLogs)}" : "";
+
+        if (facts.RemoteLogons.Count == 0)
+            return new StatusLine(label, "見られた記録の中には無い" + unread, StatusLevel.Normal, caveat);
+
+        var byAddress = facts.RemoteLogons
+            .GroupBy(l => l.Address ?? "接続元不明")
+            .OrderByDescending(g => g.Max(l => l.TimeUtc))
+            .Select(g => $"{g.Key}（{g.Count()} 件、最後は {g.Max(l => l.TimeUtc).ToLocalTime():MM-dd HH:mm}）")
+            .ToList();
+        var latest = facts.RemoteLogons
+            .OrderByDescending(l => l.TimeUtc)
+            .Take(5)
+            .Select(l => $"{l.TimeUtc.ToLocalTime():yyyy-MM-dd HH:mm} {l.What} {l.User ?? "利用者不明"} {l.Address ?? ""}（{l.Source}）".TrimEnd());
+        return new StatusLine(label,
+            $"リモートデスクトップの記録が {facts.RemoteLogons.Count} 件。接続元: {string.Join("、", byAddress.Take(3))}"
+            + (byAddress.Count > 3 ? $" ほか {byAddress.Count - 3} か所" : "") + unread,
+            StatusLevel.Notice,
+            "新しい順: " + string.Join(" ／ ", latest) + "。自分の接続でなければ、" + NextStep);
+    }
+
+    /// <summary>カメラ・マイク（§16.2 E）。いま使っているアプリを出す。署名の無いものが使っていれば警告する。</summary>
+    private static StatusLine Devices(ScanFacts facts, IReadOnlyList<Finding> findings)
+    {
+        const string label = "カメラ・マイク";
+        if (facts.DeviceUsages.Count == 0)
+            return new StatusLine(label, "使用中のアプリなし（使った記録も無い）", StatusLevel.Normal,
+                "画面の取り込みは、この記録には残らない");
+
+        bool Unsigned(DeviceUsage usage) =>
+            usage.Path is not null
+            && findings.FirstOrDefault(f => f.DeviceUsages.Contains(usage))?.Signature.Status is SignatureStatus.None or SignatureStatus.Invalid;
+
+        var last = facts.DeviceUsages.OrderByDescending(u => u.LastStartUtc).First();
+        var lastText = $"最後に使ったのは {last.AppDisplay}（{last.DeviceDisplay}、{last.LastStartUtc!.Value.ToLocalTime():yyyy-MM-dd HH:mm}）。"
+                       + "画面の取り込みは、この記録には残らない";
+        var inUse = facts.DeviceUsages.Where(u => u.InUse).ToList();
+        var unsignedUsers = facts.DeviceUsages.Where(Unsigned).Select(u => u.AppDisplay).Distinct().ToList();
+
+        if (inUse.Count == 0)
+            return unsignedUsers.Count > 0
+                ? new StatusLine(label, $"使用中のアプリなし。ただし署名の無いプログラムが使った記録がある: {string.Join("、", unsignedUsers)}",
+                    StatusLevel.Notice, lastText)
+                : new StatusLine(label, "使用中のアプリなし", StatusLevel.Normal, lastText);
+
+        var text = "使用中: " + string.Join("、", inUse
+            .GroupBy(u => u.AppDisplay)
+            .Select(g => $"{g.Key}（{string.Join("・", g.Select(u => u.DeviceDisplay).Distinct())}{(g.Any(Unsigned) ? "、署名なし ⚠" : "")}）"));
+        return inUse.Any(Unsigned)
+            ? new StatusLine(label, text, StatusLevel.Warning, "使っている覚えが無ければ、" + NextStep)
+            : new StatusLine(label, text, StatusLevel.Notice, lastText);
     }
 
     private static StatusLine OtherUsers(ScanFacts facts)

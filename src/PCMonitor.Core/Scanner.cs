@@ -73,6 +73,8 @@ public sealed class Scanner
         var remote = new RemoteAccessCollector();
         RunCollector(facts, "標準の遠隔機能", () => remote.CollectFeatures(facts, machine.IsHomeEdition, cancel));
         RunCollector(facts, "セッション", () => remote.CollectSessions(facts, cancel));
+        RunCollector(facts, "遠隔接続の履歴", () => new RemoteHistoryCollector().Collect(facts, elevated, cancel));
+        RunCollector(facts, "カメラ・マイク", () => new CaptureDeviceCollector().Collect(facts, cancel));
 
         if (keyApi is not null)
         {
@@ -136,6 +138,8 @@ public sealed class Scanner
             HasPrevious = hasPrevious,
             Machine = machine,
             CurrentState = currentState,
+            RemoteLogons = facts.RemoteLogons,
+            DeviceUsages = facts.DeviceUsages,
         };
     }
 
@@ -162,6 +166,7 @@ public sealed class Scanner
             .Concat(facts.Processes.Select(p => p.Path))
             .Concat(facts.KeyApiCalls.Select(c => c.Path))
             // インストール済みのプログラムは、遠隔操作ソフトの EXE を指しているものだけ確かめる（全部だと遅い）
+            .Concat(facts.DeviceUsages.Select(u => u.Path))
             .Concat(facts.InstalledPrograms.Select(p => p.ExecutablePath)
                 .Where(exe => exe is not null && RemoteToolCatalog.MatchFileName(Path.GetFileName(exe)) is not null))
             .Where(p => p is not null)

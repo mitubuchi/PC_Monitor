@@ -21,6 +21,8 @@ public enum FindingSources
     KeyApi = 16,
     /// <summary>遠隔操作ソフトとして照合表に当たった（設計書 §16）。</summary>
     Remote = 32,
+    /// <summary>カメラかマイクを使った記録がある（設計書 §16.2 E）。</summary>
+    Device = 64,
 }
 
 public enum IndicatorKind
@@ -50,6 +52,7 @@ public enum IndicatorKind
     // 第 3 段階（設計書 §16.3）
     RemoteToolImpersonation,
     RemoteToolRecentlyInstalled,
+    CaptureDeviceUnsigned,
 
     // ここから下は点を付けない「情報」
     MissingFile,
@@ -59,6 +62,7 @@ public enum IndicatorKind
     KeyApiNote,
     RemoteTool,
     RemoteToolSignerUnverified,
+    CaptureDeviceUse,
 }
 
 /// <summary>兆候。点だけでなく、人が確かめられる根拠の文を必ず持つ（設計書 §7）。</summary>
@@ -99,6 +103,9 @@ public sealed class Finding
     /// <summary>このプログラムのインストールの記録（Uninstall キー）。</summary>
     public List<InstalledProgram> Installations { get; } = new();
 
+    /// <summary>このプログラムがカメラやマイクを使った記録（設計書 §16.2 E）。</summary>
+    public List<DeviceUsage> DeviceUsages { get; } = new();
+
     /// <summary>許可リストに、同じパスと同じハッシュで登録されている。</summary>
     public bool IsAllowed { get; set; }
 
@@ -112,7 +119,8 @@ public sealed class Finding
         | (Endpoints.Count > 0 ? FindingSources.Network : FindingSources.None)
         | (LoadedBy.Count > 0 ? FindingSources.Module : FindingSources.None)
         | (KeyApiCalls.Count > 0 ? FindingSources.KeyApi : FindingSources.None)
-        | (RemoteTool is not null ? FindingSources.Remote : FindingSources.None);
+        | (RemoteTool is not null ? FindingSources.Remote : FindingSources.None)
+        | (DeviceUsages.Count > 0 ? FindingSources.Device : FindingSources.None);
 
     [JsonIgnore]
     public string LevelDisplay => Level switch
@@ -147,6 +155,12 @@ public sealed class ScanResult
     /// 危険度順の一覧に混ぜずに別に持つ。
     /// </summary>
     public List<StatusLine> CurrentState { get; init; } = new();
+
+    /// <summary>遠隔からのログオン・接続の記録（設計書 §16.2 D）。書き出した結果からあとで追えるように、全部残す。</summary>
+    public List<RemoteLogon> RemoteLogons { get; init; } = new();
+
+    /// <summary>カメラ・マイクを使った記録（設計書 §16.2 E）。ストア アプリの分は候補にならないので、ここにだけ残る。</summary>
+    public List<DeviceUsage> DeviceUsages { get; init; } = new();
 }
 
 public enum StatusLevel

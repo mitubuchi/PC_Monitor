@@ -172,6 +172,34 @@ public sealed record SessionFact(
     public bool IsRemote => WinStation.StartsWith("RDP-", StringComparison.OrdinalIgnoreCase);
 }
 
+public enum CaptureDevice
+{
+    Camera,
+    Microphone,
+}
+
+/// <summary>
+/// アプリがカメラやマイクを最後に使った記録（設計書 §16.2 E）。Windows が自分で残している。
+/// <see cref="Path"/> は、ふつうのアプリ（NonPackaged）なら実行ファイル、ストア アプリなら null。
+/// </summary>
+public sealed record DeviceUsage(CaptureDevice Device, string App, string? Path, DateTime? LastStartUtc, DateTime? LastStopUtc)
+{
+    /// <summary>使い始めた記録があり、止めた記録が無い（0）か、止めたより後に使い始めている。</summary>
+    public bool InUse => LastStartUtc is { } start && (LastStopUtc is not { } stop || stop < start);
+
+    public string DeviceDisplay => Device == CaptureDevice.Camera ? "カメラ" : "マイク";
+
+    /// <summary>画面に出すアプリの名前。ふつうのアプリはファイル名、ストア アプリはパッケージ名の前半。</summary>
+    public string AppDisplay => Path is not null ? System.IO.Path.GetFileName(Path) : App.Split('_')[0];
+}
+
+/// <summary>
+/// 遠隔からのログオン・接続の記録 1 件（設計書 §16.2 D）。
+/// </summary>
+/// <param name="What">「ログオン」「切断」「再接続」「認証成功」など。</param>
+/// <param name="Source">どのログの何番か（例: <c>LocalSessionManager 21</c>）。</param>
+public sealed record RemoteLogon(DateTime TimeUtc, string What, string? User, string? Address, int? SessionId, string Source);
+
 /// <summary>点検できなかった項目。全体は止めず、画面に出す（設計書 §8）。</summary>
 public sealed record ScanNote(string Area, string Message, bool NeedsAdmin = false);
 
@@ -204,6 +232,12 @@ public sealed class ScanFacts
 
     /// <summary>点検している画面そのものがリモート経由か（<c>SM_REMOTESESSION</c>）。</summary>
     public bool CurrentSessionIsRemote { get; set; }
+
+    public List<DeviceUsage> DeviceUsages { get; } = new();
+    public List<RemoteLogon> RemoteLogons { get; } = new();
+
+    /// <summary>遠隔接続の履歴のうち、読めなかったログ（権限不足など）。帯に「見られなかった」と書くのに使う。</summary>
+    public List<string> UnreadLogs { get; } = new();
 
     public List<ScanNote> Notes { get; } = new();
 }

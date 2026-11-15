@@ -8,6 +8,8 @@
   <ItemGroup>
     <!-- WMI（Win32_Process のコマンドライン、root\subscription のイベント購読）に使う -->
     <PackageReference Include="System.Management" Version="10.0.15" />
+    <!-- イベント ログ（遠隔接続の履歴。設計書 §16.2 D）を読むのに使う。Microsoft 製、MIT（nuspec で確認） -->
+    <PackageReference Include="System.Diagnostics.EventLog" Version="10.0.15" />
     <!-- ETW のセッションと、イベントの読み取りに使う（設計書 §11.5）。Microsoft 製、MIT（nuspec で確認） -->
     <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="4.0.0" />
   </ItemGroup>

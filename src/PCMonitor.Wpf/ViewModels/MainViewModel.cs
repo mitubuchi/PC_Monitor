@@ -35,7 +35,7 @@ public sealed class MainViewModel : ReactiveObject, IDisposable
     private IReadOnlyList<ScanNote> _notes = Array.Empty<ScanNote>();
     private IReadOnlyList<StatusLine> _currentState = new[]
     {
-        new StatusLine("いまの状態", "スキャンすると、リモート セッション・遠隔操作ソフト・Windows の遠隔機能の状態をここに出します", StatusLevel.Normal),
+        new StatusLine("いまの状態", "スキャンすると、リモート セッション・遠隔操作ソフト・Windows の遠隔機能・遠隔接続の履歴・カメラとマイクの状態をここに出します", StatusLevel.Normal),
     };
 
     public MainViewModel()
@@ -144,7 +144,7 @@ public sealed class MainViewModel : ReactiveObject, IDisposable
         set => this.RaiseAndSetIfChanged(ref _showAllowed, value);
     }
 
-    /// <summary>0: すべて、1: 常駐、2: プロセス、3: 通信、4: DLL、5: キー入力、6: 遠隔</summary>
+    /// <summary>0: すべて、1: 常駐、2: プロセス、3: 通信、4: DLL、5: キー入力、6: 遠隔、7: カメラ・マイク</summary>
     public int KindFilter
     {
         get => _kindFilter;
@@ -251,6 +251,7 @@ public sealed class MainViewModel : ReactiveObject, IDisposable
             4 => FindingSources.Module,
             5 => FindingSources.KeyApi,
             6 => FindingSources.Remote,
+            7 => FindingSources.Device,
             _ => FindingSources.None,
         };
         if (source != FindingSources.None) rows = rows.Where(r => r.Finding.Sources.HasFlag(source));

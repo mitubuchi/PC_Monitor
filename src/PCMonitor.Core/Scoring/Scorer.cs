@@ -41,6 +41,7 @@ public sealed class ScoringRules
     // 第 3 段階（設計書 §16.3）
     public int RemoteToolImpersonation { get; init; } = 40;
     public int RemoteToolRecentlyInstalled { get; init; } = 20;
+    public int CaptureDeviceUnsigned { get; init; } = 30;
 
     /// <summary>発行元の違うプログラムが、この数以上その DLL を読み込んでいたら「広く入り込んでいる」とする。</summary>
     public int ModulePublisherThreshold { get; init; } = 3;
@@ -163,10 +164,15 @@ public sealed class Scorer
 
         AttachRemoteTools(findings, facts);
 
+        // カメラ・マイクを使った、ふつうのアプリ。ストア アプリはストアの署名で配られるので候補にしない
+        foreach (var usage in facts.DeviceUsages)
+            if (usage.Path is { } usagePath) ForFile(findings, usagePath).DeviceUsages.Add(usage);
+
         foreach (var finding in findings.Values)
         {
             if (finding.Path is not null) AddFileIndicators(finding, files(finding.Path), nowUtc);
             AddRemoteToolIndicators(finding, nowUtc);
+            AddDeviceIndicators(finding);
             AddPersistenceIndicators(finding);
             AddProcessIndicators(finding, scannerSession);
             AddParentIndicators(finding, processes);
@@ -289,8 +295,10 @@ public sealed class Scorer
         {
             if (finding.Persistence.Count > 0)
                 Add(finding, IndicatorKind.MissingFile, 0, "ファイル無し", "登録は残っているが、ファイルが無い");
-            else
+            else if (finding.Processes.Count > 0)
                 Add(finding, IndicatorKind.MissingFile, 0, "ファイル無し", "動いているが、実行ファイルがもう無い（または読めない）");
+            else
+                Add(finding, IndicatorKind.MissingFile, 0, "ファイル無し", "記録に残っているが、ファイルがもう無い（または読めない）");
             return;
         }
 
@@ -383,6 +391,23 @@ public sealed class Scorer
             finding.Indicators.RemoveAll(i => i.Kind == IndicatorKind.RecentlyCreated);
             Add(finding, IndicatorKind.RemoteToolRecentlyInstalled, _rules.RemoteToolRecentlyInstalled, "入れたばかり", recent);
         }
+    }
+
+    /// <summary>カメラ・マイクの使用（設計書 §16.2 E）。書き込める場所は、ファイルの兆候としてすでに付いている。</summary>
+    private void AddDeviceIndicators(Finding finding)
+    {
+        if (finding.DeviceUsages.Count == 0) return;
+
+        var uses = string.Join("、", finding.DeviceUsages
+            .OrderByDescending(u => u.LastStartUtc)
+            .Select(u => $"{u.DeviceDisplay}（{(u.InUse ? "いま使用中の見込み" : $"最後は {u.LastStartUtc!.Value.ToLocalTime():yyyy-MM-dd HH:mm}")}）"));
+        Add(finding, IndicatorKind.CaptureDeviceUse, 0, "カメラ/マイク", $"使った記録がある: {uses}");
+
+        // 署名を確かめられなかった（ファイルが無い）ものには付けない
+        if (finding.Signature.Status is SignatureStatus.None or SignatureStatus.Invalid)
+            Add(finding, IndicatorKind.CaptureDeviceUnsigned, _rules.CaptureDeviceUnsigned, "未署名で撮影・録音",
+                $"署名が{(finding.Signature.Status == SignatureStatus.None ? "無い" : "有効でない")}プログラムが、"
+                + string.Join("と", finding.DeviceUsages.Select(u => u.DeviceDisplay).Distinct()) + "を使った");
     }
 
     private bool IsRecent(DateTime? utc, DateTime nowUtc) =>

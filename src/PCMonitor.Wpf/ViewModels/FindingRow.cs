@@ -46,9 +46,16 @@ public sealed class FindingRow : ReactiveObject
                 .Concat(finding.Installations.Select(i =>
                     $"インストール: {i.DisplayName}（発行元 {i.Publisher ?? "不明"}、"
                     + $"インストール日 {i.InstallDate?.ToLocalTime().ToString("yyyy-MM-dd") ?? "不明"}）\n　　{i.RegistryKey}"))
-                .Append("接続の記録は、この版では読んでいない（第 3 段階の手順 2 で入れる）")
+                .Append("この製品自身の接続記録は読んでいない（製品と版ごとに書式を確かめてから入れる）。リモートデスクトップの記録は「いまの状態」にある")
                 .ToList()
             : new List<string>();
+
+        DeviceUsages = finding.DeviceUsages
+            .OrderByDescending(u => u.LastStartUtc)
+            .Select(u => $"{u.DeviceDisplay}　{(u.InUse ? "いま使用中の見込み" : "")}"
+                         + $"使い始め {u.LastStartUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "—"}"
+                         + $"　終わり {u.LastStopUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "—"}")
+            .ToList();
 
         LoadedBy = finding.LoadedBy
             .GroupBy(h => (h.ProcessName, h.Publisher))
@@ -94,6 +101,9 @@ public sealed class FindingRow : ReactiveObject
     public IReadOnlyList<string> RemoteTool { get; }
 
     public bool HasRemoteTool => RemoteTool.Count > 0;
+
+    public IReadOnlyList<string> DeviceUsages { get; }
+    public bool HasDeviceUsages => DeviceUsages.Count > 0;
 
     /// <summary>心当たりが無いときの次の一歩（設計書 §16.4）。止める操作は置かず、文で示す。</summary>
     public string RemoteNextStep => CurrentStateBuilder.NextStep;
