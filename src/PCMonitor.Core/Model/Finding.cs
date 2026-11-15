@@ -53,6 +53,7 @@ public enum IndicatorKind
     RemoteToolImpersonation,
     RemoteToolRecentlyInstalled,
     CaptureDeviceUnsigned,
+    HiddenDesktopWindow,
 
     // ここから下は点を付けない「情報」
     MissingFile,
@@ -105,6 +106,9 @@ public sealed class Finding
 
     /// <summary>このプログラムがカメラやマイクを使った記録（設計書 §16.2 E）。</summary>
     public List<DeviceUsage> DeviceUsages { get; } = new();
+
+    /// <summary>このプログラムがウィンドウを持っている、見慣れないデスクトップ（設計書 §16.2 F）。</summary>
+    public List<string> HiddenDesktops { get; } = new();
 
     /// <summary>許可リストに、同じパスと同じハッシュで登録されている。</summary>
     public bool IsAllowed { get; set; }
@@ -161,6 +165,12 @@ public sealed class ScanResult
 
     /// <summary>カメラ・マイクを使った記録（設計書 §16.2 E）。ストア アプリの分は候補にならないので、ここにだけ残る。</summary>
     public List<DeviceUsage> DeviceUsages { get; init; } = new();
+
+    /// <summary>WinSta0 の中のデスクトップ（設計書 §16.2 F）。</summary>
+    public List<DesktopFact> Desktops { get; init; } = new();
+
+    /// <summary>合成入力を見張っていたなら、その結果（設計書 §16.2 G）。1 秒ごとの件数だけで、キーの中身は無い。</summary>
+    public Monitoring.InputObservation? Input { get; init; }
 }
 
 public enum StatusLevel

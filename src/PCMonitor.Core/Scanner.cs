@@ -45,7 +45,9 @@ public sealed class Scanner
 
     /// <summary>途中で止められたら <see cref="OperationCanceledException"/> を投げる。</summary>
     /// <param name="keyApi">キー入力 API を見張っていたなら、その結果。見張っていなければ null。</param>
-    public ScanResult Scan(IProgress<string>? progress = null, CancellationToken cancel = default, KeyApiObservation? keyApi = null)
+    /// <param name="input">合成入力を見張っていたなら、その結果。見張っていなければ null。</param>
+    public ScanResult Scan(IProgress<string>? progress = null, CancellationToken cancel = default, KeyApiObservation? keyApi = null,
+        InputObservation? input = null)
     {
         var started = DateTime.UtcNow;
         var watch = Stopwatch.StartNew();
@@ -75,6 +77,8 @@ public sealed class Scanner
         RunCollector(facts, "セッション", () => remote.CollectSessions(facts, cancel));
         RunCollector(facts, "遠隔接続の履歴", () => new RemoteHistoryCollector().Collect(facts, elevated, cancel));
         RunCollector(facts, "カメラ・マイク", () => new CaptureDeviceCollector().Collect(facts, cancel));
+        RunCollector(facts, "隠しデスクトップ", () => new DesktopCollector().Collect(facts, cancel));
+        facts.Input = input;
 
         if (keyApi is not null)
         {
@@ -140,6 +144,8 @@ public sealed class Scanner
             CurrentState = currentState,
             RemoteLogons = facts.RemoteLogons,
             DeviceUsages = facts.DeviceUsages,
+            Desktops = facts.Desktops,
+            Input = input,
         };
     }
 

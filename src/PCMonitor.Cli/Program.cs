@@ -11,6 +11,7 @@ using PCMonitor.Core.Signing;
 //   pcmonitor-cli [--min-level info|low|medium|high] [--verbose] [--find <文字列>]
 //             [--json <パス>] [--csv <パス>] [--data-dir <フォルダー>] [--no-save]
 //   pcmonitor-cli --verify <ファイル>      署名の検証結果だけを表示する
+//   pcmonitor-cli --watch-input <秒> …     その秒数だけ合成入力を見張ってから点検する（キーの中身は読まない）
 
 Console.OutputEncoding = new UTF8Encoding(false);
 
@@ -27,6 +28,7 @@ if (Flag("--help") || Flag("-h"))
     Console.WriteLine("pcmonitor-cli [--min-level info|low|medium|high] [--verbose] [--find <文字列>]");
     Console.WriteLine("          [--json <パス>] [--csv <パス>] [--data-dir <フォルダー>] [--no-save]");
     Console.WriteLine("pcmonitor-cli --verify <ファイル>");
+    Console.WriteLine("pcmonitor-cli --watch-input <秒> [ほかの指定]   合成入力を見張ってから点検する");
     return 0;
 }
 
@@ -130,7 +132,19 @@ else if (Option("--read-etl") is { } replayPath)
         keyApi = new KeyApiObservation(calls.Min(c => c.TimeUtc), calls.Max(c => c.TimeUtc), calls);
 }
 
-var result = scanner.Scan(new Progress(), CancellationToken.None, keyApi);
+// 合成入力の見張り（設計書 §16.2 G）。管理者は要らない。件数だけを数え、キーの中身は読まない
+InputObservation? input = null;
+if (int.TryParse(Option("--watch-input"), out var watchSeconds) && watchSeconds > 0)
+{
+    using var watcher = new InjectedInputMonitor();
+    watcher.Start();
+    Console.Error.WriteLine($"合成入力を {watchSeconds} 秒見張ります…（キーの中身は読みません）");
+    Thread.Sleep(TimeSpan.FromSeconds(watchSeconds));
+    watcher.Stop();
+    input = watcher.Observation();
+}
+
+var result = scanner.Scan(new Progress(), CancellationToken.None, keyApi, input);
 
 Console.WriteLine();
 Console.WriteLine($"点検 {result.StartedUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}  所要 {result.Elapsed.TotalSeconds:F1} 秒  "

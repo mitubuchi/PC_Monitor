@@ -13,7 +13,7 @@ public static class CurrentStateBuilder
 {
     /// <summary>心当たりが無いときの次の一歩。止める操作は置かず、文で示す（設計書 §16.4）。</summary>
     public const string NextStep =
-        "心当たりが無ければ、まずネットワーク（LAN ケーブル・Wi-Fi）を切る。そのうえでアンインストールし、"
+        "まずネットワーク（LAN ケーブル・Wi-Fi）を切る。そのうえでアンインストールし、"
         + "銀行や会社の管理者に連絡する。電話で言われて入れた場合は、その電話の相手には連絡しない";
 
     public static List<StatusLine> Build(ScanFacts facts, IReadOnlyList<Finding> findings, int scannerSession)
@@ -25,6 +25,8 @@ public static class CurrentStateBuilder
             Features(facts),
             History(facts),
             Devices(facts, findings),
+            Desktops(facts, findings),
+            Input(facts, findings),
             OtherUsers(facts),
         };
     }
@@ -146,6 +148,63 @@ public static class CurrentStateBuilder
         return inUse.Any(Unsigned)
             ? new StatusLine(label, text, StatusLevel.Warning, "使っている覚えが無ければ、" + NextStep)
             : new StatusLine(label, text, StatusLevel.Notice, lastText);
+    }
+
+    /// <summary>隠しデスクトップ（§16.2 F）。見慣れないものは名前を出し、ウィンドウを持つプログラムも添える。</summary>
+    private static StatusLine Desktops(ScanFacts facts, IReadOnlyList<Finding> findings)
+    {
+        const string label = "隠しデスクトップ";
+        const string scope = "見えるのは、自分の画面（WinSta0）の中のデスクトップだけ";
+        if (facts.Desktops.Count == 0)
+            return new StatusLine(label, "点検できなかった", StatusLevel.Notice, scope);
+
+        var unfamiliar = facts.Desktops.Where(d => !d.Familiar).ToList();
+        if (unfamiliar.Count == 0)
+            return new StatusLine(label, "見慣れないものは無い", StatusLevel.Normal,
+                $"{scope}。あったもの: {string.Join("、", facts.Desktops.Select(d => d.Name))}");
+
+        string Owners(DesktopFact desktop)
+        {
+            if (desktop.Error is not null) return $"中を見られなかった: {desktop.Error}";
+            if (desktop.WindowOwners.Count == 0) return "ウィンドウは無い";
+            var names = desktop.WindowOwners.Select(pid =>
+                findings.FirstOrDefault(f => f.Processes.Any(p => p.Pid == pid))?.Name ?? $"PID {pid}");
+            return "ウィンドウを持つもの: " + string.Join("、", names.Distinct());
+        }
+
+        var withWindows = unfamiliar.Any(d => d.WindowOwners.Count > 0);
+        return new StatusLine(label,
+            "見慣れないデスクトップがある: " + string.Join("、", unfamiliar.Select(d => $"{d.Name}（{Owners(d)}）")),
+            withWindows ? StatusLevel.Warning : StatusLevel.Notice,
+            withWindows
+                ? "パスワード管理ソフトの安全な入力画面や、仮想デスクトップの道具も作る。覚えが無ければ、" + NextStep
+                : scope + "。パスワード管理ソフトの安全な入力画面や、仮想デスクトップの道具も作る");
+    }
+
+    /// <summary>
+    /// 合成入力（§16.2 G）。合成入力だけでは警告しない（スクリーン キーボードや AutoHotkey なども作る）。
+    /// 遠隔操作ソフトが動いているときに来ていれば警告する。
+    /// </summary>
+    private static StatusLine Input(ScanFacts facts, IReadOnlyList<Finding> findings)
+    {
+        const string label = "合成入力";
+        if (facts.Input is not { } input)
+            return new StatusLine(label, "見張っていない", StatusLevel.Normal,
+                "［合成入力の見張りを開始］で始め、［停止］で止める。キーの中身は読まず、件数だけを数える");
+
+        var period = $"見張っていた {input.Period}";
+        if (input.Injected == 0)
+            return new StatusLine(label, $"{period} に、合成入力は無かった", StatusLevel.Normal,
+                "リモートデスクトップ経由の入力には印が付かないので、ここには数えられない（「リモート セッション」の行で分かる）");
+
+        var text = $"{period} に {input.Injected} 件（キー {input.InjectedKeys}・マウス {input.InjectedMouse}、"
+                   + $"多い 1 秒で {input.PeakInjectedPerSecond} 件）";
+        var tools = findings.Where(f => f.RemoteTool is not null && f.Processes.Count > 0).Select(f => f.RemoteTool!.Product).Distinct().ToList();
+        return tools.Count > 0
+            ? new StatusLine(label, $"{text}。遠隔操作ソフト（{string.Join("、", tools)}）が動いている ⚠", StatusLevel.Warning,
+                "自分で操作していないのにマウスやキーが動いていたなら、" + NextStep)
+            : new StatusLine(label, text, StatusLevel.Notice,
+                "作ったプロセスは分からない。スクリーン キーボード、AutoHotkey、マウスやゲーム機器のユーティリティなども作る");
     }
 
     private static StatusLine OtherUsers(ScanFacts facts)

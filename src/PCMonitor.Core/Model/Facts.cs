@@ -200,6 +200,13 @@ public sealed record DeviceUsage(CaptureDevice Device, string App, string? Path,
 /// <param name="Source">どのログの何番か（例: <c>LocalSessionManager 21</c>）。</param>
 public sealed record RemoteLogon(DateTime TimeUtc, string What, string? User, string? Address, int? SessionId, string Source);
 
+/// <summary>
+/// 自分のウィンドウ ステーション（WinSta0）の中のデスクトップ 1 つ（設計書 §16.2 F）。
+/// </summary>
+/// <param name="Familiar">Windows が自分で作る名前（Default など）か。</param>
+/// <param name="WindowOwners">そのデスクトップにウィンドウを持つプロセス。開けなかったら空。</param>
+public sealed record DesktopFact(string Name, bool Familiar, IReadOnlyList<int> WindowOwners, string? Error = null);
+
 /// <summary>点検できなかった項目。全体は止めず、画面に出す（設計書 §8）。</summary>
 public sealed record ScanNote(string Area, string Message, bool NeedsAdmin = false);
 
@@ -238,6 +245,11 @@ public sealed class ScanFacts
 
     /// <summary>遠隔接続の履歴のうち、読めなかったログ（権限不足など）。帯に「見られなかった」と書くのに使う。</summary>
     public List<string> UnreadLogs { get; } = new();
+
+    public List<DesktopFact> Desktops { get; } = new();
+
+    /// <summary>合成入力を見張っていたなら、その結果（設計書 §16.2 G）。見張っていなければ null。</summary>
+    public Monitoring.InputObservation? Input { get; set; }
 
     public List<ScanNote> Notes { get; } = new();
 }

@@ -42,6 +42,7 @@ public sealed class ScoringRules
     public int RemoteToolImpersonation { get; init; } = 40;
     public int RemoteToolRecentlyInstalled { get; init; } = 20;
     public int CaptureDeviceUnsigned { get; init; } = 30;
+    public int HiddenDesktopWindow { get; init; } = 30;
 
     /// <summary>発行元の違うプログラムが、この数以上その DLL を読み込んでいたら「広く入り込んでいる」とする。</summary>
     public int ModulePublisherThreshold { get; init; } = 3;
@@ -112,6 +113,11 @@ public sealed class Scorer
             byPid[process.Pid] = finding;
         }
 
+        // 見慣れないデスクトップにウィンドウを持つプロセス（設計書 §16.2 F）
+        foreach (var desktop in facts.Desktops.Where(d => !d.Familiar))
+            foreach (var pid in desktop.WindowOwners)
+                if (byPid.TryGetValue(pid, out var owner)) owner.HiddenDesktops.Add(desktop.Name);
+
         var processes = new Dictionary<int, ProcessFact>();
         foreach (var process in facts.Processes) processes[process.Pid] = process;
 
@@ -173,6 +179,10 @@ public sealed class Scorer
             if (finding.Path is not null) AddFileIndicators(finding, files(finding.Path), nowUtc);
             AddRemoteToolIndicators(finding, nowUtc);
             AddDeviceIndicators(finding);
+            if (finding.HiddenDesktops.Count > 0)
+                Add(finding, IndicatorKind.HiddenDesktopWindow, _rules.HiddenDesktopWindow, "隠しデスクトップ",
+                    $"画面に出ていない、見慣れないデスクトップにウィンドウを持っている: {Summarize(finding.HiddenDesktops.Distinct())}。"
+                    + "画面に見えないところでブラウザーなどを動かす遠隔操作の手口がこの形になる（パスワード管理ソフトの安全な入力画面なども作る）");
             AddPersistenceIndicators(finding);
             AddProcessIndicators(finding, scannerSession);
             AddParentIndicators(finding, processes);

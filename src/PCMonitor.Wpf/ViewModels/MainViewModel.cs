@@ -16,6 +16,9 @@ public sealed class MainViewModel : ReactiveObject, IDisposable
 {
     private readonly Scanner _scanner = new();
     private readonly KeyApiMonitor _monitor = new();
+    private readonly InjectedInputMonitor _input = new();
+    private bool _isWatchingInput;
+    private string _inputStatus = "合成入力の見張り: 止まっています";
     private readonly string _monitorUnsupportedReason;
     private bool _isMonitoring;
     private string _monitorStatus = "";
@@ -60,6 +63,12 @@ public sealed class MainViewModel : ReactiveObject, IDisposable
         // どちらかが欠けていれば、押せない状態にして理由を出す
         (MonitorSupported, _monitorUnsupportedReason) = KeyApiMonitor.CheckSupport();
         ToggleMonitorCommand = ReactiveCommand.Create(ToggleMonitor, Observable.Return(IsElevated && MonitorSupported));
+        // 合成入力の見張りは、管理者でなくても始められる（設計書 §16.2 G）
+        ToggleInputCommand = ReactiveCommand.Create(ToggleInput);
+        Observable.FromEvent(handler => _input.Changed += handler, handler => _input.Changed -= handler)
+            .Sample(TimeSpan.FromMilliseconds(500))
+            .ObserveOn(RxSchedulers.MainThreadScheduler)
+            .Subscribe(_ => UpdateInputStatus());
 
         // 呼び出しは受け取りのスレッドから知らされる。画面のスレッドへ移してから件数を直す
         Observable.FromEvent<KeyApiCall>(handler => _monitor.CallObserved += handler, handler => _monitor.CallObserved -= handler)
@@ -72,6 +81,7 @@ public sealed class MainViewModel : ReactiveObject, IDisposable
                  {
                      ScanCommand, CancelCommand, RestartAsAdminCommand, OpenLocationCommand,
                      CopyHashCommand, ToggleAllowCommand, ExportCsvCommand, ExportJsonCommand, ToggleMonitorCommand,
+                     ToggleInputCommand,
                  })
         {
             command.ThrownExceptions.Subscribe(ex => ShowError(ex.Message));
@@ -104,6 +114,19 @@ public sealed class MainViewModel : ReactiveObject, IDisposable
     public ReactiveCommand<Unit, Unit> ExportCsvCommand { get; }
     public ReactiveCommand<Unit, Unit> ExportJsonCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleMonitorCommand { get; }
+    public ReactiveCommand<Unit, Unit> ToggleInputCommand { get; }
+
+    public bool IsWatchingInput
+    {
+        get => _isWatchingInput;
+        private set => this.RaiseAndSetIfChanged(ref _isWatchingInput, value);
+    }
+
+    public string InputStatus
+    {
+        get => _inputStatus;
+        private set => this.RaiseAndSetIfChanged(ref _inputStatus, value);
+    }
 
     /// <summary>この Windows に、キー入力 API の監視に使うイベントがあるか（権限は別）。</summary>
     public bool MonitorSupported { get; }
@@ -202,7 +225,8 @@ public sealed class MainViewModel : ReactiveObject, IDisposable
             var token = _cancel.Token;
             // 見張っていたなら、その間に拾った呼び出しを点検に渡す
             var keyApi = _monitor.Observation();
-            var result = await Task.Run(() => _scanner.Scan(progress, token, keyApi), token);
+            var input = _input.Observation();
+            var result = await Task.Run(() => _scanner.Scan(progress, token, keyApi, input), token);
 
             _result = result;
             _all = result.Findings.Select(f => new FindingRow(f)).ToList();
@@ -367,8 +391,42 @@ public sealed class MainViewModel : ReactiveObject, IDisposable
             MonitorStatus = "キー入力 API の監視: 止まっています";
     }
 
+    // ---- 合成入力の見張り（設計書 §16.2 G） ----
+
+    private void ToggleInput()
+    {
+        if (_input.IsRunning)
+        {
+            _input.Stop();
+        }
+        else
+        {
+            try
+            {
+                _input.Start();
+            }
+            catch (Win32Exception ex)
+            {
+                ShowError("合成入力の見張りを始められませんでした。\n" + ex.Message);
+            }
+        }
+        IsWatchingInput = _input.IsRunning;
+        UpdateInputStatus();
+    }
+
+    private void UpdateInputStatus()
+    {
+        var observation = _input.Observation();
+        InputStatus = observation is null
+            ? "合成入力の見張り: 止まっています"
+            : (_input.IsRunning ? $"合成入力を見張り中（{_input.StartedUtc?.ToLocalTime():HH:mm:ss} から）" : "見張りを止めました")
+              + $"：合成入力 {observation.Injected} 件。スキャンすると結果に入ります";
+    }
+
     public void Dispose()
     {
+        // フックを残さない
+        _input.Dispose();
         // セッションを残さない。残ると、次に始めるまでイベントを受け続ける
         _monitor.Dispose();
         _cancel?.Cancel();

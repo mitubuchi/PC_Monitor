@@ -178,6 +178,9 @@ public sealed class KeyApiMonitor : IDisposable
     private void OnEvent(TraceEvent data)
     {
         if (_devices is null || ToCall(data, _devices, resolveLiveProcess: true) is not { } call) return;
+        // 点検している自分自身は候補にしない（設計書 §6）。合成入力の見張り（§16.2 G）では、
+        // 自分が低レベル フックを仕掛けるので、外さないと自分が「キー入力 API」の候補になる
+        if (call.Pid == Environment.ProcessId) return;
         lock (_gate)
         {
             // 同じ呼び出しを延々と繰り返すプロセスに、覚えておく枠を使い切らせない

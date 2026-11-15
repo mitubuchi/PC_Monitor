@@ -79,6 +79,20 @@
                         </Button.Style>
                     </Button>
 
+                    <Button DockPanel.Dock="Left" Command="{Binding ToggleInputCommand}"
+                            ToolTip="本人が触っていないのに来ているマウスやキーの入力（合成入力）を数えます（管理者は要りません）。&#x0a;キーの中身は読みません。1 秒ごとの件数だけを数えます。&#x0a;入力を作ったプロセスは分かりません。止めるまでの間だけ見張り、常駐はしません。">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                <Setter Property="Content" Value="合成入力の見張りを開始" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsWatchingInput}" Value="True">
+                                        <Setter Property="Content" Value="見張りを停止" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+
                     <Button DockPanel.Dock="Right" Content="JSON" Margin="0" Command="{Binding ExportJsonCommand}"
                             ToolTip="点検の結果すべてを JSON に書き出します。" />
                     <Button DockPanel.Dock="Right" Content="CSV" Command="{Binding ExportCsvCommand}"
@@ -114,7 +128,9 @@
                 <DockPanel Margin="0,10,0,0" LastChildFill="True">
                     <CheckBox DockPanel.Dock="Right" Content="許可済みも表示" IsChecked="{Binding ShowAllowed}" VerticalAlignment="Center" Margin="16,0,0,0" />
                     <TextBlock DockPanel.Dock="Right" Text="{Binding MonitorStatus}" VerticalAlignment="Center" Margin="16,0,0,0"
-                               Foreground="{StaticResource Subtle}" TextTrimming="CharacterEllipsis" MaxWidth="460" />
+                               Foreground="{StaticResource Subtle}" TextTrimming="CharacterEllipsis" MaxWidth="360" />
+                    <TextBlock DockPanel.Dock="Right" Text="{Binding InputStatus}" VerticalAlignment="Center" Margin="16,0,0,0"
+                               Foreground="{StaticResource Subtle}" TextTrimming="CharacterEllipsis" MaxWidth="300" />
                     <ProgressBar DockPanel.Dock="Left" Width="120" Height="6" IsIndeterminate="True" Margin="0,0,10,0" VerticalAlignment="Center"
                                  Visibility="{Binding IsScanning, Converter={StaticResource BoolToVisibility}}" />
                     <TextBlock Text="{Binding Progress}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
